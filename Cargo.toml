@@ -1,0 +1,22 @@
+[package]
+name = "tet-line"
+version = "0.1.0"
+edition = "2021"
+description = "OpenGL explorer for complex tetration along a line"
+license = "Apache-2.0"
+repository = "https://github.com/lukaszgryglicki/tet-line"
+
+[dependencies]
+macroquad = "=0.4.14"
+num-complex = "0.4.6"
+
+[dev-dependencies]
+tempfile = "3"
+
+# The sibling drawer's miniquad patch enables the X11/OpenGL backend on FreeBSD.
+[patch.crates-io]
+miniquad = { path = "third_party/miniquad" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
