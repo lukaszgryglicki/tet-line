@@ -21,6 +21,10 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         vec![],
         vec!["2", "NaN", "0", "0", "1", "0"],
         vec!["2", "0", "0", "0", "1", "0", "1"],
+        vec!["x^^", "0", "0", "1", "0"],
+        vec!["sin(x,x)", "0", "0", "1", "0"],
+        vec!["--expr=", "0", "0", "1", "0"],
+        vec!["x", "0", "NaN", "1", "0"],
     ] {
         let output = command()
             .env("PATH", directory.path())
@@ -37,15 +41,19 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
 #[test]
 fn missing_tet_fails_before_opening_a_window() {
     let directory = tempfile::tempdir().unwrap();
-    let output = command()
-        .env("PATH", directory.path())
-        .args(["2", "0", "0", "0", "1", "0", "2"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("ensure the tet executable is on PATH")
-    );
+    for args in [
+        vec!["2", "0", "0", "0", "1", "0", "2"],
+        vec!["x^^x-x^x+x", "1", "0", "2", "0", "2"],
+    ] {
+        let output = command()
+            .env("PATH", directory.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("ensure the tet executable is on PATH"));
+    }
 }
 
 #[cfg(unix)]
@@ -61,13 +69,33 @@ fn all_failed_samples_report_the_solver_error_without_opening_a_window() {
     )
     .unwrap();
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for args in [
+        vec!["2", "0", "-3", "0", "-2", "0", "2"],
+        vec!["sin(x^^x)+x", "-3", "0", "-2", "0", "2"],
+    ] {
+        let output = command()
+            .env("PATH", directory.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("unsupported height"));
+        assert!(stderr.contains("no finite values"));
+    }
+}
+
+#[test]
+fn all_nonfinite_expression_results_fail_without_needing_tet_or_a_display() {
+    let directory = tempfile::tempdir().unwrap();
     let output = command()
         .env("PATH", directory.path())
-        .args(["2", "0", "-3", "0", "-2", "0", "2"])
+        .args(["1/0", "0", "0", "1", "0", "2"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unsupported height"));
+    assert!(stderr.contains("expression returned a nonfinite value"));
     assert!(stderr.contains("no finite values"));
+    assert!(!stderr.contains("could not run tet"));
 }

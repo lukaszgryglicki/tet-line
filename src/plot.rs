@@ -40,7 +40,7 @@ impl Plot {
         let mut finite = values.iter().flatten().filter(is_finite);
         let first = finite
             .next()
-            .ok_or_else(|| "tet returned no finite values for this line".to_owned())?;
+            .ok_or_else(|| "function returned no finite values for this line".to_owned())?;
         let mut real = Range {
             min: first.re,
             max: first.re,

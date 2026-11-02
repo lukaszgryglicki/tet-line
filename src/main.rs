@@ -1,4 +1,5 @@
 mod cli;
+mod expression;
 mod plot;
 mod sampling;
 mod viewer;
@@ -26,10 +27,16 @@ fn main() -> ExitCode {
         .unwrap_or(1)
         .min(config.points);
     eprintln!(
-        "Calculating {} points with {workers} tet processes ({} digits, one thread each)...",
+        "Calculating {} points for f(x) = {} with {workers} workers...",
         config.points,
-        sampling::PRECISION
+        config.function.source()
     );
+    if config.function.uses_tet() {
+        eprintln!(
+            "  tet: {} digits, at most {workers} processes, one thread each",
+            sampling::PRECISION
+        );
+    }
     let started = Instant::now();
     let progress_step = (config.points / 20).max(1);
     let samples =

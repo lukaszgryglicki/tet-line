@@ -29,7 +29,20 @@ pub fn calculate(
     calculate_with(
         config,
         workers,
-        |index| evaluate(program, config.base, config.height(index)),
+        |index| {
+            let value = config
+                .function
+                .evaluate(config.height(index), &mut |base, height| {
+                    evaluate(program, base, height)
+                })?;
+            if value.is_finite() {
+                Ok(value)
+            } else {
+                Err(SampleError::Missing(
+                    "expression returned a nonfinite value".to_owned(),
+                ))
+            }
+        },
         progress,
     )
 }
@@ -82,7 +95,7 @@ fn calculate_with(
                     missing += 1;
                     if failure_examples.len() < 3 {
                         failure_examples.push(format!(
-                            "sample {} at h={}: {reason}",
+                            "sample {} at x={}: {reason}",
                             index + 1,
                             config.height(index)
                         ));
@@ -107,6 +120,11 @@ fn calculate_with(
 }
 
 fn evaluate(program: &Path, base: Complex64, height: Complex64) -> Result<Complex64, SampleError> {
+    if !base.is_finite() || !height.is_finite() {
+        return Err(SampleError::Missing(
+            "tetration operands must be finite".to_owned(),
+        ));
+    }
     let output = Command::new(program)
         .args([
             PRECISION.to_string(),
@@ -157,7 +175,7 @@ mod tests {
 
     fn config(points: usize) -> Config {
         Config {
-            base: Complex64::new(1.333, -0.06),
+            function: crate::expression::Expression::tetration(Complex64::new(1.333, -0.06)),
             from: Complex64::new(-2.0, 1.0),
             to: Complex64::new(2.0, -1.0),
             points,
@@ -272,5 +290,104 @@ fi
         let mut calls: Vec<f64> = calls.lines().map(|line| line.parse().unwrap()).collect();
         calls.sort_by(f64::total_cmp);
         assert_eq!(calls, [-2.0, -1.0, 0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn expressions_without_tetration_need_no_executable() {
+        let mut config = config(5);
+        config.function = crate::expression::Expression::parse("sin(x)+x^2+3i").unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let samples =
+            calculate(&config, &directory.path().join("missing-tet"), 3, |_, _| {}).unwrap();
+        assert!(samples.failure_examples.is_empty());
+        for (index, value) in samples.values.iter().enumerate() {
+            let x = config.height(index);
+            let expected = x.sin() + x * x + Complex64::new(0.0, 3.0);
+            assert!((value.unwrap() - expected).norm() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn nonfinite_expression_results_leave_gaps_but_predicates_can_handle_them() {
+        let mut config = config(3);
+        config.from = Complex64::new(-1.0, 0.0);
+        config.to = Complex64::new(1.0, 0.0);
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("missing-tet");
+        config.function = crate::expression::Expression::parse("1/x").unwrap();
+        let samples = calculate(&config, &program, 2, |_, _| {}).unwrap();
+        assert_eq!(
+            samples.values,
+            [
+                Some(Complex64::new(-1.0, 0.0)),
+                None,
+                Some(Complex64::new(1.0, 0.0)),
+            ]
+        );
+        assert_eq!(samples.failure_examples.len(), 1);
+        assert!(samples.failure_examples[0].contains("nonfinite"));
+        config.function = crate::expression::Expression::parse("isfinite(1/x)").unwrap();
+        let samples = calculate(&config, &program, 2, |_, _| {}).unwrap();
+        assert_eq!(
+            samples.values,
+            [
+                Some(Complex64::new(1.0, 0.0)),
+                Some(Complex64::new(0.0, 0.0)),
+                Some(Complex64::new(1.0, 0.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn nonfinite_tetration_operands_do_not_launch_a_process() {
+        let mut config = config(2);
+        config.function = crate::expression::Expression::parse("(1/x)^^x").unwrap();
+        config.from = Complex64::new(0.0, 0.0);
+        config.to = config.from;
+        let directory = tempfile::tempdir().unwrap();
+        let samples =
+            calculate(&config, &directory.path().join("missing-tet"), 2, |_, _| {}).unwrap();
+        assert_eq!(samples.values, [None, None]);
+        assert!(samples
+            .failure_examples
+            .iter()
+            .all(|reason| reason.contains("tetration operands must be finite")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expression_tetration_passes_computed_base_and_height_through_the_protocol() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("tet");
+        std::fs::write(
+            &program,
+            r#"#!/bin/sh
+if [ "$#" -ne 5 ] || [ "$1" != 10 ] || [ "$SILENT" != 1 ] || [ "$RAYON_NUM_THREADS" != 1 ]; then
+    echo 'incorrect invocation' >&2
+    exit 2
+fi
+printf '%s %s %s %s\n' "$2" "$3" "$4" "$5" >> "$0.calls"
+printf '%s\n%s\n' "$2" "$4"
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config = config(3);
+        config.from = Complex64::new(0.0, 0.0);
+        config.to = Complex64::new(2.0, 0.0);
+        config.function =
+            crate::expression::Expression::parse("(x+1+2i)^^(2*x-i)-x^2+sin(x)").unwrap();
+        let samples = calculate(&config, &program, 3, |_, _| {}).unwrap();
+        for (index, value) in samples.values.iter().enumerate() {
+            let x = config.height(index);
+            let expected = Complex64::new(x.re + 1.0, 2.0 * x.re) - x * x + x.sin();
+            assert!((value.unwrap() - expected).norm() < 1e-12);
+        }
+        let calls = std::fs::read_to_string(directory.path().join("tet.calls")).unwrap();
+        let mut calls: Vec<_> = calls.lines().collect();
+        calls.sort_unstable();
+        assert_eq!(calls, ["1 2 0 -1", "2 2 2 -1", "3 2 4 -1"]);
     }
 }

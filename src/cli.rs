@@ -1,14 +1,27 @@
+use crate::expression::Expression;
 use num_complex::Complex64;
 
 pub const USAGE: &str = "\
-Usage: tet-line [--screenshot=FILE.png] <base_re> <base_im> \
+Usage: tet-line [--screenshot=FILE.png] <expression> \
+<plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
+       tet-line [--screenshot=FILE.png] --expr=EXPRESSION \
+<plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
+       tet-line [--screenshot=FILE.png] <base_re> <base_im> \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
 
-Draw complex tetration along the inclusive line from plot_from to plot_to.
+Draw a complex function along the inclusive line from plot_from to plot_to.
 The number of points defaults to 512 and must be at least 2.
-All numeric arguments must be finite; negative arguments need no extra flags.
+Line/base coordinates must be finite; negative arguments need no extra flags.
+Quote expressions. x (or z) is the complex point on the argument line.
+Operators: + - * / ^ ^^, parentheses and implicit multiplication (2x, 3i).
+^^ is tetration and binds tighter than ^; both associate right, before unary -.
+Constants: i, j, pi, tau, e. Functions match rust-opengl-complex-drawer, including
+sin, cos, tan, exp, ln, log, sqrt, abs, arg, re, im, conj, pow, gamma and factorial.
+Use --expr=EXPRESSION for numeric constants with a point count; six/seven
+numeric positionals retain the original fixed-base tetration format.
 
-Runs PATH's tet at 10-digit precision, once per point, using all available CPUs.
+Each ^^ runs PATH's tet at 10-digit precision; other math is evaluated locally.
+Uses all available CPUs. Expressions without ^^ do not need tet.
 Failed/nonfinite samples leave gaps. Exploration never recalculates values.
 x = position along the complex argument line, y = Re(result), z = Im(result).
 
@@ -17,12 +30,14 @@ Keys: A/D W/S Q/E rotate, Z/X zoom, R auto-rotate, 0 reset, P save PNG, F1 help,
 --screenshot=FILE.png saves the initial view and exits.
 -h, --help prints this help without opening a window.
 
-Example: tet-line 1.333 -0.06 -2 0 2 0
+Examples: tet-line 'x^^x-x^x+x' 1 0 2 0
+          tet-line 'sin(x)+exp(i*x)' -2 0 2 0
+          tet-line 1.333 -0.06 -2 0 2 0
 ";
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub base: Complex64,
+    pub function: Expression,
     pub from: Complex64,
     pub to: Complex64,
     pub points: usize,
@@ -33,6 +48,7 @@ impl Config {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Option<Self>, String> {
         let mut positional = Vec::new();
         let mut screenshot = None;
+        let mut expression = None;
         let mut options = true;
         for arg in args {
             if options {
@@ -52,6 +68,12 @@ impl Config {
                     }
                     continue;
                 }
+                if let Some(source) = arg.strip_prefix("--expr=") {
+                    if expression.replace(source.to_owned()).is_some() {
+                        return Err("--expr may only be specified once".to_owned());
+                    }
+                    continue;
+                }
                 if arg.starts_with("--") {
                     return Err(format!("unknown option: {arg}"));
                 }
@@ -59,25 +81,42 @@ impl Config {
             positional.push(arg);
         }
 
-        if !(6..=7).contains(&positional.len()) {
-            return Err("expected six numeric arguments and an optional point count".to_owned());
+        if expression.is_none()
+            && (positional.len() == 5
+                || (positional.len() == 6 && positional[0].parse::<f64>().is_err()))
+        {
+            expression = Some(positional.remove(0));
+        }
+        let coordinate_count = if expression.is_some() { 4 } else { 6 };
+        if !(coordinate_count..=coordinate_count + 1).contains(&positional.len()) {
+            return Err(
+                "expected an expression and four coordinates, or six legacy coordinates, \
+                 followed by an optional point count"
+                    .to_owned(),
+            );
         }
         let mut numbers = [0.0; 6];
-        for ((number, arg), name) in numbers.iter_mut().zip(&positional).zip([
+        let offset = 6 - coordinate_count;
+        let names = [
             "base_re",
             "base_im",
             "plot_from_re",
             "plot_from_im",
             "plot_to_re",
             "plot_to_im",
-        ]) {
+        ];
+        for ((number, arg), name) in numbers[offset..]
+            .iter_mut()
+            .zip(&positional)
+            .zip(&names[offset..])
+        {
             *number = arg
                 .parse::<f64>()
                 .ok()
                 .filter(|value| value.is_finite())
                 .ok_or_else(|| format!("{name} must be a finite number, got '{arg}'"))?;
         }
-        let points = match positional.get(6) {
+        let points = match positional.get(coordinate_count) {
             Some(arg) => arg
                 .parse::<usize>()
                 .ok()
@@ -85,8 +124,14 @@ impl Config {
                 .ok_or_else(|| "number_of_points must be an integer of at least 2".to_owned())?,
             None => 512,
         };
+        let function = match expression {
+            Some(source) => {
+                Expression::parse(&source).map_err(|err| format!("invalid expression: {err}"))?
+            }
+            None => Expression::tetration(Complex64::new(numbers[0], numbers[1])),
+        };
         Ok(Some(Self {
-            base: Complex64::new(numbers[0], numbers[1]),
+            function,
             from: Complex64::new(numbers[2], numbers[3]),
             to: Complex64::new(numbers[4], numbers[5]),
             points,
@@ -135,7 +180,15 @@ mod tests {
         let config = parse(&["1.333", "-0.06", "-2", "0", "2", "0"])
             .unwrap()
             .unwrap();
-        assert_eq!(config.base, Complex64::new(1.333, -0.06));
+        let mut operands = None;
+        config
+            .function
+            .evaluate(config.height(0), &mut |base, height| {
+                operands = Some((base, height));
+                Ok::<_, ()>(height)
+            })
+            .unwrap();
+        assert_eq!(operands, Some((Complex64::new(1.333, -0.06), config.from)));
         assert_eq!(config.points, 512);
         assert_eq!(config.height(0), config.from);
         assert_eq!(config.height(511), config.to);
@@ -150,7 +203,7 @@ mod tests {
             ((2.0, 3.0), (2.0, 3.0), (2.0, 3.0)),
         ] {
             let config = Config {
-                base: Complex64::new(2.0, 0.0),
+                function: Expression::tetration(Complex64::new(2.0, 0.0)),
                 from: Complex64::new(from.0, from.1),
                 to: Complex64::new(to.0, to.1),
                 points: 3,
@@ -218,5 +271,85 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(config.screenshot.as_deref(), Some("--screenshot=a.png"));
+    }
+
+    #[test]
+    fn accepts_expressions_with_default_or_explicit_sample_counts() {
+        for args in [
+            vec!["x^^x-x^x+x", "-2", "-1", "2", "1"],
+            vec!["--expr=x^^x-x^x+x", "-2", "-1", "2", "1"],
+        ] {
+            let config = parse(&args).unwrap().unwrap();
+            assert_eq!(config.function.source(), "x^^x-x^x+x");
+            assert_eq!(config.points, 512);
+            assert_eq!(config.height(0), Complex64::new(-2.0, -1.0));
+            assert_eq!(config.height(511), Complex64::new(2.0, 1.0));
+        }
+        let config = parse(&[
+            "sin(x)+3i",
+            "-2",
+            "-1",
+            "--screenshot=expression.png",
+            "2",
+            "1",
+            "3",
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(config.points, 3);
+        assert_eq!(config.height(1), Complex64::new(0.0, 0.0));
+        assert_eq!(config.screenshot.as_deref(), Some("expression.png"));
+        let value = config
+            .function
+            .evaluate(config.height(1), &mut |_, _| Err("unexpected tet"))
+            .unwrap();
+        assert_eq!(value, Complex64::new(0.0, 3.0));
+    }
+
+    #[test]
+    fn disambiguates_numeric_constants_and_accepts_leading_minus_expressions() {
+        for args in [
+            vec!["2", "-1", "0", "1", "0"],
+            vec!["--expr=2", "-1", "0", "1", "0", "9"],
+        ] {
+            let config = parse(&args).unwrap().unwrap();
+            let value = config
+                .function
+                .evaluate(config.from, &mut |_, _| Err("unexpected tet"))
+                .unwrap();
+            assert_eq!(value, Complex64::new(2.0, 0.0));
+            assert_eq!(config.points, if args.len() == 5 { 512 } else { 9 });
+        }
+        let legacy = parse(&["2", "0", "-1", "0", "1", "0"]).unwrap().unwrap();
+        assert!(legacy.function.uses_tet());
+        assert_eq!(legacy.points, 512);
+        for (source, expected) in [("-x^2", -4.0), ("--x", 2.0)] {
+            let config = parse(&["--", source, "-2", "0", "2", "0", "3"])
+                .unwrap()
+                .unwrap();
+            let value = config
+                .function
+                .evaluate(config.to, &mut |_, _| Err("unexpected tet"))
+                .unwrap();
+            assert!((value - Complex64::new(expected, 0.0)).norm() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn validates_expression_syntax_coordinates_counts_and_duplicate_options() {
+        for source in ["", "x^^", "unknown(x)", "pow(x)", "sin(x,2)"] {
+            assert!(parse(&[source, "0", "0", "1", "0"]).is_err());
+        }
+        for index in 1..=4 {
+            let mut args = ["x", "0", "0", "1", "0"];
+            args[index] = "NaN";
+            assert!(parse(&args).is_err());
+        }
+        for count in ["0", "1", "-2", "2.5"] {
+            assert!(parse(&["x", "0", "0", "1", "0", count]).is_err());
+        }
+        assert!(parse(&["--expr=x", "--expr=x", "0", "0", "1", "0"]).is_err());
+        assert!(parse(&["--expr=", "0", "0", "1", "0"]).is_err());
+        assert!(parse(&["x", "0", "0", "1"]).is_err());
     }
 }

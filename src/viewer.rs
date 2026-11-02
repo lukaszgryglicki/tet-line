@@ -13,7 +13,7 @@ const Z_COLOR: Color = Color::new(0.55, 0.7, 1.0, 1.0);
 pub fn window_config() -> macroquad::conf::Conf {
     macroquad::conf::Conf {
         miniquad_conf: macroquad::miniquad::conf::Conf {
-            window_title: "tet-line - complex tetration".to_owned(),
+            window_title: "tet-line - complex functions".to_owned(),
             window_width: 1280,
             window_height: 900,
             high_dpi: true,
@@ -91,17 +91,22 @@ impl View {
 pub async fn run(config: Config, plot: Plot) {
     let labels = axis_labels(&config, &plot);
     let status = [
-        format!("tet-line   b = {}", complex(config.base)),
+        format!("tet-line   f(x) = {}", config.function.source()),
         format!(
-            "x: {} -> {}   |   y: Re(tet)   |   z: Im(tet)",
+            "x: {} -> {}   |   y: Re(f(x))   |   z: Im(f(x))",
             complex(config.from),
             complex(config.to)
         ),
         format!(
-            "{} / {} finite samples, {} skipped   |   calculated once at 10 digits",
+            "{} / {} finite samples, {} skipped   |   calculated once{}",
             plot.finite_count,
             config.points,
-            config.points - plot.finite_count
+            config.points - plot.finite_count,
+            if config.function.uses_tet() {
+                " (tet: 10 digits)"
+            } else {
+                ""
+            }
         ),
         format!(
             "Re: [{}, {}]   Im: [{}, {}]   |   axes fitted independently",
@@ -256,17 +261,17 @@ fn axis_labels(config: &Config, plot: &Plot) -> Vec<Label> {
     labels.extend([
         Label {
             position: vec3(1.25, -1.0, 1.1),
-            text: "x: height".to_owned(),
+            text: "x: argument".to_owned(),
             color: X_COLOR,
         },
         Label {
             position: vec3(-1.0, 1.25, 1.0),
-            text: "y: Re(tet)".to_owned(),
+            text: "y: Re(f(x))".to_owned(),
             color: Y_COLOR,
         },
         Label {
             position: vec3(-1.45, -1.3, 1.5),
-            text: "z: Im(tet)".to_owned(),
+            text: "z: Im(f(x))".to_owned(),
             color: Z_COLOR,
         },
     ]);
