@@ -109,7 +109,7 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-Apache-2.0; see [LICENSE](LICENSE). Graphics follow
+AGPL-3.0-only; see [LICENSE](LICENSE). Graphics follow
 [rust-opengl-complex-drawer](https://github.com/lukaszgryglicki/rust-opengl-complex-drawer):
 Macroquad 0.4.14 with its vendored Miniquad 0.4.8
 [FreeBSD X11/OpenGL patch](https://github.com/not-fl3/miniquad/pull/600).
