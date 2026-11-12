@@ -41,9 +41,23 @@ impl Expression {
         self.root.uses_tet()
     }
 
-    pub fn evaluate<E>(&self, x: C, tet: &mut impl FnMut(C, C) -> Result<C, E>) -> Result<C, E> {
+    pub fn evaluate<E>(
+        &self,
+        x: C,
+        tet: &mut impl FnMut(Operation, C, C) -> Result<C, E>,
+    ) -> Result<C, E> {
         self.root.evaluate(x, tet)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Operation {
+    /// (base, height) -> base^^height
+    Tetration,
+    /// (base, value) -> the height with base^^height = value
+    SuperLog,
+    /// (value, height) -> the base with base^^height = value
+    SuperRoot,
 }
 
 #[derive(Clone, Debug)]
@@ -63,11 +77,17 @@ impl Expr {
             Self::Binary(op, left, right) => {
                 matches!(op, BinaryOp::Tet) || left.uses_tet() || right.uses_tet()
             }
-            Self::Function(_, args) => args.iter().any(Self::uses_tet),
+            Self::Function(name, args) => {
+                solver_operation(name).is_some() || args.iter().any(Self::uses_tet)
+            }
         }
     }
 
-    fn evaluate<E>(&self, x: C, tet: &mut impl FnMut(C, C) -> Result<C, E>) -> Result<C, E> {
+    fn evaluate<E>(
+        &self,
+        x: C,
+        tet: &mut impl FnMut(Operation, C, C) -> Result<C, E>,
+    ) -> Result<C, E> {
         Ok(match self {
             Self::Constant(value) => *value,
             Self::Variable => x,
@@ -81,7 +101,7 @@ impl Expr {
                     BinaryOp::Mul => a * b,
                     BinaryOp::Div => a / b,
                     BinaryOp::Pow => a.powc(b),
-                    BinaryOp::Tet => tet(a, b)?,
+                    BinaryOp::Tet => tet(Operation::Tetration, a, b)?,
                 }
             }
             Self::Function(name, args) => {
@@ -89,9 +109,20 @@ impl Expr {
                 for (value, arg) in values.iter_mut().zip(args) {
                     *value = arg.evaluate(x, tet)?;
                 }
-                eval_function(name, &values[..args.len()])
+                match solver_operation(name) {
+                    Some(operation) => tet(operation, values[0], values[1])?,
+                    None => eval_function(name, &values[..args.len()]),
+                }
             }
         })
+    }
+}
+
+fn solver_operation(name: &str) -> Option<Operation> {
+    match name {
+        "slog" | "ate" => Some(Operation::SuperLog),
+        "ssrt" | "sroot" => Some(Operation::SuperRoot),
+        _ => None,
     }
 }
 
@@ -259,7 +290,7 @@ fn function_arity(name: &str) -> Option<(usize, usize)> {
         | "fact" => Some((1, 1)),
         "pow" | "powc" | "powf" | "powi" | "powu" | "root" | "scale" | "unscale" | "fdiv"
         | "complex" | "rect" | "new" | "polar" | "from_polar" | "minabs" | "maxabs" | "avg"
-        | "expf" => Some((2, 2)),
+        | "expf" | "slog" | "ate" | "ssrt" | "sroot" => Some((2, 2)),
         "log" => Some((1, 2)),
         _ => None,
     }
@@ -524,7 +555,7 @@ mod tests {
     fn eval(source: &str, x: C) -> C {
         Expression::parse(source)
             .unwrap()
-            .evaluate(x, &mut |_, _| Err("unexpected tetration"))
+            .evaluate(x, &mut |_, _, _| Err("unexpected tetration"))
             .unwrap()
     }
 
@@ -722,7 +753,7 @@ mod tests {
             let mut calls = Vec::new();
             let value = Expression::parse(source)
                 .unwrap()
-                .evaluate(C::new(0.0, 0.0), &mut |a, b| {
+                .evaluate(C::new(0.0, 0.0), &mut |_, a, b| {
                     calls.push((a, b));
                     Ok::<_, ()>(a + b)
                 })
@@ -743,7 +774,7 @@ mod tests {
         let mut calls = Vec::new();
         let value = Expression::parse("x^^x-x^x+x")
             .unwrap()
-            .evaluate(x, &mut |a, b| {
+            .evaluate(x, &mut |_, a, b| {
                 calls.push((a, b));
                 Ok::<_, ()>(tet_value)
             })
@@ -758,12 +789,73 @@ mod tests {
         assert!(expression.uses_tet());
         assert!(!Expression::parse("sin(x)^2+x").unwrap().uses_tet());
         let mut calls = Vec::new();
-        let result = expression.evaluate(C::new(2.0, 3.0), &mut |a, b| {
+        let result = expression.evaluate(C::new(2.0, 3.0), &mut |_, a, b| {
             calls.push((a, b));
             Err::<C, _>("solver failed")
         });
         assert_eq!(result, Err("solver failed"));
         assert_eq!(calls, [(C::new(3.0, 3.0), C::new(2.0, 2.0))]);
+    }
+
+    #[test]
+    fn inverse_tetration_functions_pass_their_operands_to_tet_in_order() {
+        let x = C::new(1.3, -0.2);
+        let (tet, slog, ssrt) = (C::new(4.0, 5.0), C::new(6.0, 7.0), C::new(8.0, 9.0));
+        let run = |source: &str| {
+            let mut calls = Vec::new();
+            let value = Expression::parse(source)
+                .unwrap()
+                .evaluate(x, &mut |operation, a, b| {
+                    calls.push((operation, a, b));
+                    Ok::<_, ()>(match operation {
+                        Operation::Tetration => tet,
+                        Operation::SuperLog => slog,
+                        Operation::SuperRoot => ssrt,
+                    })
+                })
+                .unwrap();
+            (value, calls)
+        };
+        let (value, calls) = run("x^^x + ate(2+i, x) - ssrt(x, 1.5-i)");
+        assert_close(value, tet + slog - ssrt);
+        assert_eq!(
+            calls,
+            [
+                (Operation::Tetration, x, x),
+                (Operation::SuperLog, C::new(2.0, 1.0), x),
+                (Operation::SuperRoot, x, C::new(1.5, -1.0)),
+            ]
+        );
+        let (value, calls) = run("2SLOG(x, sroot(3, x)^^i)");
+        assert_close(value, 2.0 * slog);
+        assert_eq!(
+            calls,
+            [
+                (Operation::SuperRoot, C::new(3.0, 0.0), x),
+                (Operation::Tetration, ssrt, C::new(0.0, 1.0)),
+                (Operation::SuperLog, x, tet),
+            ]
+        );
+    }
+
+    #[test]
+    fn inverse_tetration_functions_need_tet_two_arguments_and_preserve_errors() {
+        for source in ["slog(2, x)", "ate(2, x)", "ssrt(x, 2)", "sin(sroot(x, 2))"] {
+            assert!(Expression::parse(source).unwrap().uses_tet(), "{source}");
+        }
+        for source in ["slog(x)", "ate()", "ssrt(x, 2, 3)", "sroot", "sroot x, 2"] {
+            let error = Expression::parse(source).unwrap_err();
+            assert!(error.contains("byte"), "{source}: {error}");
+        }
+        let mut calls = Vec::new();
+        let result = Expression::parse("ate(ssrt(x, 2), x) + x^^2")
+            .unwrap()
+            .evaluate(C::new(2.0, 3.0), &mut |operation, _, _| {
+                calls.push(operation);
+                Err::<C, _>("solver failed")
+            });
+        assert_eq!(result, Err("solver failed"));
+        assert_eq!(calls, [Operation::SuperRoot]);
     }
 
     #[test]

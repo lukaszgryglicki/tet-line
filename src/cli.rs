@@ -17,11 +17,13 @@ Operators: + - * / ^ ^^, parentheses and implicit multiplication (2x, 3i).
 ^^ is tetration and binds tighter than ^; both associate right, before unary -.
 Constants: i, j, pi, tau, e. Functions match rust-opengl-complex-drawer, including
 sin, cos, tan, exp, ln, log, sqrt, abs, arg, re, im, conj, pow, gamma and factorial.
+slog(b,z) (or ate) is the height h and ssrt(z,h) (or sroot) the base b in b^^h = z.
 Use --expr=EXPRESSION for numeric constants with a point count; six/seven
 numeric positionals retain the original fixed-base tetration format.
 
 Each ^^ runs PATH's tet at 10-digit precision; other math is evaluated locally.
-Uses all available CPUs. Expressions without ^^ do not need tet.
+slog/ssrt run tet's --slog/--sroot modes; ssrt at non-integer heights can be slow.
+Uses all available CPUs. Expressions without ^^, slog or ssrt do not need tet.
 Failed/nonfinite samples leave gaps. Exploration never recalculates values.
 x = position along the complex argument line, y = Re(result), z = Im(result).
 
@@ -183,7 +185,7 @@ mod tests {
         let mut operands = None;
         config
             .function
-            .evaluate(config.height(0), &mut |base, height| {
+            .evaluate(config.height(0), &mut |_, base, height| {
                 operands = Some((base, height));
                 Ok::<_, ()>(height)
             })
@@ -301,7 +303,7 @@ mod tests {
         assert_eq!(config.screenshot.as_deref(), Some("expression.png"));
         let value = config
             .function
-            .evaluate(config.height(1), &mut |_, _| Err("unexpected tet"))
+            .evaluate(config.height(1), &mut |_, _, _| Err("unexpected tet"))
             .unwrap();
         assert_eq!(value, Complex64::new(0.0, 3.0));
     }
@@ -315,7 +317,7 @@ mod tests {
             let config = parse(&args).unwrap().unwrap();
             let value = config
                 .function
-                .evaluate(config.from, &mut |_, _| Err("unexpected tet"))
+                .evaluate(config.from, &mut |_, _, _| Err("unexpected tet"))
                 .unwrap();
             assert_eq!(value, Complex64::new(2.0, 0.0));
             assert_eq!(config.points, if args.len() == 5 { 512 } else { 9 });
@@ -329,7 +331,7 @@ mod tests {
                 .unwrap();
             let value = config
                 .function
-                .evaluate(config.to, &mut |_, _| Err("unexpected tet"))
+                .evaluate(config.to, &mut |_, _, _| Err("unexpected tet"))
                 .unwrap();
             assert!((value - Complex64::new(expected, 0.0)).norm() < 1e-12);
         }

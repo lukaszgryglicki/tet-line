@@ -1,4 +1,5 @@
 use crate::cli::Config;
+use crate::expression::Operation;
 use num_complex::Complex64;
 use std::io;
 use std::path::Path;
@@ -32,8 +33,8 @@ pub fn calculate(
         |index| {
             let value = config
                 .function
-                .evaluate(config.height(index), &mut |base, height| {
-                    evaluate(program, base, height)
+                .evaluate(config.height(index), &mut |operation, a, b| {
+                    evaluate(program, operation, a, b)
                 })?;
             if value.is_finite() {
                 Ok(value)
@@ -119,19 +120,30 @@ fn calculate_with(
     })
 }
 
-fn evaluate(program: &Path, base: Complex64, height: Complex64) -> Result<Complex64, SampleError> {
-    if !base.is_finite() || !height.is_finite() {
+fn evaluate(
+    program: &Path,
+    operation: Operation,
+    a: Complex64,
+    b: Complex64,
+) -> Result<Complex64, SampleError> {
+    if !a.is_finite() || !b.is_finite() {
         return Err(SampleError::Missing(
             "tetration operands must be finite".to_owned(),
         ));
     }
+    let mode: &[&str] = match operation {
+        Operation::Tetration => &[],
+        Operation::SuperLog => &["-q", "--slog"],
+        Operation::SuperRoot => &["-q", "--sroot"],
+    };
     let output = Command::new(program)
+        .args(mode)
         .args([
             PRECISION.to_string(),
-            base.re.to_string(),
-            base.im.to_string(),
-            height.re.to_string(),
-            height.im.to_string(),
+            a.re.to_string(),
+            a.im.to_string(),
+            b.re.to_string(),
+            b.im.to_string(),
         ])
         .env("SILENT", "1")
         .env("RAYON_NUM_THREADS", "1")
@@ -389,5 +401,45 @@ printf '%s\n%s\n' "$2" "$4"
         let mut calls: Vec<_> = calls.lines().collect();
         calls.sort_unstable();
         assert_eq!(calls, ["1 2 0 -1", "2 2 2 -1", "3 2 4 -1"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inverse_functions_run_the_quiet_slog_and_sroot_modes_with_operands_in_order() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("tet");
+        std::fs::write(
+            &program,
+            r#"#!/bin/sh
+if [ "$SILENT" != 1 ] || [ "$RAYON_NUM_THREADS" != 1 ]; then
+    echo 'incorrect environment' >&2
+    exit 2
+fi
+case "$#,$1,$2,$3" in
+    5,10,*) mode=tet; result=1 ;;
+    7,-q,--slog,10) mode=slog; result=10; shift 2 ;;
+    7,-q,--sroot,10) mode=sroot; result=100; shift 2 ;;
+    *) echo 'incorrect invocation' >&2; exit 2 ;;
+esac
+printf '%s %s %s %s %s\n' "$mode" "$2" "$3" "$4" "$5" >> "$0.calls"
+printf '%s\n0\n' "$result"
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config = config(2);
+        config.from = Complex64::new(1.25, -0.5);
+        config.to = config.from;
+        config.function =
+            crate::expression::Expression::parse("x^^x + ate(2+i, x) - ssrt(x, 1.5-i)").unwrap();
+        let samples = calculate(&config, &program, 1, |_, _| {}).unwrap();
+        assert_eq!(samples.values, [Some(Complex64::new(-89.0, 0.0)); 2]);
+        let calls = std::fs::read_to_string(directory.path().join("tet.calls")).unwrap();
+        assert_eq!(
+            calls,
+            "tet 1.25 -0.5 1.25 -0.5\nslog 2 1 1.25 -0.5\nsroot 1.25 -0.5 1.5 -1\n".repeat(2)
+        );
     }
 }

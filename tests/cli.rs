@@ -44,6 +44,7 @@ fn missing_tet_fails_before_opening_a_window() {
     for args in [
         vec!["2", "0", "0", "0", "1", "0", "2"],
         vec!["x^^x-x^x+x", "1", "0", "2", "0", "2"],
+        vec!["ate(2,x)-ssrt(x,2)", "1", "0", "2", "0", "2"],
     ] {
         let output = command()
             .env("PATH", directory.path())

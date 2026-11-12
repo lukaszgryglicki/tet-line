@@ -2,12 +2,13 @@
 
 An OpenGL-backed Rust viewer for complex functions along any straight line in the
 complex plane. **All tetration (`^^`) is calculated by the external `tet` executable
-on PATH.** Other arithmetic and functions are evaluated locally; this project
-contains no tetration implementation or approximation.
+on PATH**, and so are its inverses `slog` and `ssrt`. Other arithmetic and functions
+are evaluated locally; this project contains no tetration implementation or
+approximation.
 
 ## Build and run
 
-Install Rust and, for expressions using `^^`, put the `tet` executable from
+Install Rust and, for expressions that need it, put the `tet` executable from
 [claude-tetration](https://github.com/lukaszgryglicki/claude-tetration) on PATH.
 A working desktop OpenGL display is required for the viewer.
 
@@ -33,6 +34,9 @@ retain that meaning; use `--expr=2` to plot a numeric constant with a point coun
 
 # An explicit complex tetration base:
 ./target/release/tet-line '(1.333-0.06i)^^x' -2 0 2 0
+
+# Inverse tetration: the super-logarithm to base 2 and the super square root:
+./target/release/tet-line 'ate(2, x) - ssrt(x, 2)' 1 0 2 0
 
 # Imaginary height line, -3i to 3i:
 ./target/release/tet-line 1.333 -0.06 0 -3 0 3
@@ -62,6 +66,9 @@ chosen line. Quote expressions to protect operators and parentheses from the she
   `pow`, `root`, `abs`, `arg`, `re`, `im`, `conj`, `complex`, `polar`,
   rounding, finite-value predicates, `gamma`, `factorial`, and the drawer's aliases.
   Powers, logarithms and roots follow `num-complex`'s principal branches.
+- Inverse tetration, solving `b^^h = z` through `tet`: `slog(b, z)` (alias `ate`) is
+  the super-logarithm, the height `h`; `ssrt(z, h)` (alias `sroot`) is the super-root,
+  the base `b`. Both arguments can be expressions: `x^^x + ate(2+i, x) - ssrt(x, 1.5-i)`.
 
 Expressions are parsed once before calculation. Every evaluated `base^^height`
 subexpression runs:
@@ -70,13 +77,25 @@ subexpression runs:
 tet 10 base_re base_im height_re height_im
 ```
 
+Every evaluated `slog(b, z)` and `ssrt(z, h)` runs one of the solver's inverse modes
+(a `tet` build that has them is required), with the arguments in the order written:
+
+```text
+tet -q --slog 10 b_re b_im z_re z_im
+tet -q --sroot 10 z_re z_im h_re h_im
+```
+
 `SILENT=1` suppresses solver progress without requiring a particular quiet flag;
 stdout must contain the real and imaginary results as two numbers. The program
 uses all available CPU cores (up to the point count), with one `tet` process per
-worker at a time. Multiple `^^` operations within one sample run sequentially;
+worker at a time. Multiple `tet` operations within one sample run sequentially;
 their operands may themselves be expressions. Each child gets `RAYON_NUM_THREADS=1`
-to avoid nested oversubscription. Expressions without `^^` never invoke `tet`.
-On 16 available CPUs, at most 16 samples are evaluated concurrently.
+to avoid nested oversubscription. Expressions without `^^`, `slog` or `ssrt` never
+invoke `tet`. On 16 available CPUs, at most 16 samples are evaluated concurrently.
+
+A super-root at a non-integer height can take seconds to minutes per sample, so
+start with a small point count. An inverse that `tet` cannot find and verify, such
+as a value the base's tetration never takes, is a solver failure.
 
 Calculation happens once, with progress in the terminal, before the window opens.
 Changing the camera never invokes `tet` again. Solver failures, malformed output,
