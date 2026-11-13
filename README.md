@@ -61,6 +61,19 @@ chosen line. Quote expressions to protect operators and parentheses from the she
   means `-(x^2)`. Use parentheses when mixing powers and tetration.
 - Implicit multiplication: `2x`, `3i`, `2sin(x)`, `(x+1)(x-1)`.
   Constants: `i`/`j`, `pi`, `tau`, `e`, `inf`/`infinity`, `nan`; names are case-insensitive.
+- Named real constants (aliases after `/`): `pi`, `e`, `tau` (2 pi), `phi`/`golden`
+  (golden ratio), `gamma`/`eulergamma` (Euler-Mascheroni; `gamma(` is still the function),
+  `catalan`, `apery`/`zeta3` (zeta(3)), `zeta2`/`basel` (pi^2/6), `ln2`, `ln10`, `sqrt2`,
+  `sqrt3`, `sqrt5`, `sqrtpi`, `halfpi`, `eta`/`towermax` (e^(1/e)) and `towermin` (e^(-e)),
+  the largest and smallest base whose infinite tower converges, `einv` (1/e), `omega`
+  (W(1)), `dottie` (cos x = x), `gelfond` (e^pi), `gelfondschneider` (2^sqrt(2)),
+  `ramanujan` (e^(pi sqrt 163)), `silver` (1 + sqrt 2), `plastic` (x^3 = x + 1),
+  `supergolden` (x^3 = x^2 + 1), `tribonacci` (x^3 = x^2 + x + 1), `lemniscate`, `gauss`
+  (1/agm(1, sqrt 2)), `levy`, `khinchin`, `erdosborwein` (sum of 1/(2^n - 1)), `cahen`,
+  `recfib` (sum of 1/F(n)), `gompertz`, `soldner` (zero of the logarithmic integral),
+  `laplace` (Laplace limit), `parabolic` (sqrt 2 + ln(1 + sqrt 2)), `deg`/`degree`
+  (pi/180), `niven`, `twinprime`, `mertens`. Unicode aliases: `π`, `τ`, `φ`, `γ`, `η`,
+  `Ω`, `ϖ` (lemniscate), `√2`, `√3`, `√5`, `√π`.
 - Functions include complex trig/hyperbolic functions and their inverses,
   `exp`, `exp2`, `ln`, `log(x[,base])`, `log2`, `log10`, `sqrt`, `cbrt`,
   `pow`, `root`, `abs`, `arg`, `re`, `im`, `conj`, `complex`, `polar`,
@@ -69,6 +82,11 @@ chosen line. Quote expressions to protect operators and parentheses from the she
 - Inverse tetration, solving `b^^h = z` through `tet`: `slog(b, z)` (alias `ate`) is
   the super-logarithm, the height `h`; `ssrt(z, h)` (alias `sroot`) is the super-root,
   the base `b`. Both arguments can be expressions: `x^^x + ate(2+i, x) - ssrt(x, 1.5-i)`.
+- A line or base coordinate that is not a plain number is a constant expression in this
+  syntax without `x`/`z`, evaluated once to a finite real value (`^^`, `slog` and `ssrt`
+  run `tet`): `tet-line 'sin(x)' -pi 0 tau/3 0`, `'pi*e^e-pow(2, 0.5)'`, `1.5^^2`.
+  As `base_re` it needs the point count, because a first argument that is not a plain
+  number is otherwise the expression; the point count itself stays an integer.
 
 Expressions are parsed once before calculation. Every evaluated `base^^height`
 subexpression runs:

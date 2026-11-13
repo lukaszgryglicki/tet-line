@@ -41,6 +41,10 @@ impl Expression {
         self.root.uses_tet()
     }
 
+    pub fn uses_variable(&self) -> bool {
+        self.root.uses_variable()
+    }
+
     pub fn evaluate<E>(
         &self,
         x: C,
@@ -80,6 +84,16 @@ impl Expr {
             Self::Function(name, args) => {
                 solver_operation(name).is_some() || args.iter().any(Self::uses_tet)
             }
+        }
+    }
+
+    fn uses_variable(&self) -> bool {
+        match self {
+            Self::Constant(_) => false,
+            Self::Variable => true,
+            Self::Negate(arg) => arg.uses_variable(),
+            Self::Binary(_, left, right) => left.uses_variable() || right.uses_variable(),
+            Self::Function(_, args) => args.iter().any(Self::uses_variable),
         }
     }
 
@@ -296,6 +310,55 @@ fn function_arity(name: &str) -> Option<(usize, usize)> {
     }
 }
 
+const NAMED_CONSTANTS: [(&[&str], f64); 39] = [
+    (&["phi", "\u{3c6}", "golden"], 1.618033988749895),
+    (&["gamma", "\u{3b3}", "eulergamma"], 0.5772156649015329),
+    (&["catalan"], 0.915965594177219),
+    (&["apery", "zeta3"], 1.2020569031595942),
+    (&["zeta2", "basel"], 1.6449340668482264),
+    (&["ln2"], std::f64::consts::LN_2),
+    (&["ln10"], std::f64::consts::LN_10),
+    (&["sqrt2", "\u{221a}2"], std::f64::consts::SQRT_2),
+    (&["sqrt3", "\u{221a}3"], 1.7320508075688772),
+    (&["sqrt5", "\u{221a}5"], 2.23606797749979),
+    (&["sqrtpi", "\u{221a}\u{3c0}"], 1.772453850905516),
+    (&["halfpi"], std::f64::consts::FRAC_PI_2),
+    (&["eta", "\u{3b7}", "towermax"], 1.444667861009766),
+    (&["towermin"], 0.06598803584531254),
+    (&["einv"], 0.36787944117144233),
+    (&["omega", "\u{3a9}"], 0.5671432904097838),
+    (&["dottie"], 0.7390851332151607),
+    (&["gelfond"], 23.14069263277927),
+    (&["gelfondschneider"], 2.665144142690225),
+    (&["ramanujan"], 2.6253741264076874e17),
+    (&["silver"], 2.414213562373095),
+    (&["plastic"], 1.324717957244746),
+    (&["supergolden"], 1.465571231876768),
+    (&["tribonacci"], 1.8392867552141612),
+    (&["lemniscate", "\u{3d6}"], 2.6220575542921196),
+    (&["gauss"], 0.8346268416740732),
+    (&["levy"], 3.2758229187218113),
+    (&["khinchin"], 2.6854520010653062),
+    (&["erdosborwein"], 1.6066951524152917),
+    (&["cahen"], 0.643410546288338),
+    (&["recfib"], 3.3598856662431777),
+    (&["gompertz"], 0.5963473623231941),
+    (&["soldner"], 1.451369234883381),
+    (&["laplace"], 0.6627434193491816),
+    (&["parabolic"], 2.295587149392638),
+    (&["deg", "degree"], 0.017453292519943295),
+    (&["niven"], 1.7052111401053678),
+    (&["twinprime"], 0.6601618158468696),
+    (&["mertens"], 0.26149721284764277),
+];
+
+fn named_constant(name: &str) -> Option<Expr> {
+    NAMED_CONSTANTS
+        .iter()
+        .find(|(names, _)| names.contains(&name))
+        .map(|&(_, value)| Expr::Constant(C::new(value, 0.0)))
+}
+
 #[derive(Clone, Copy, Debug)]
 enum BinaryOp {
     Add,
@@ -386,7 +449,8 @@ impl Parser {
                 if let Some((min, max)) = function_arity(&name) {
                     self.bump();
                     if !matches!(self.current(), TokenKind::LParen) {
-                        return Err(self.error("expected `(` after function name"));
+                        return named_constant(&name)
+                            .ok_or_else(|| self.error("expected `(` after function name"));
                     }
                     self.bump();
                     let mut args = Vec::new();
@@ -412,11 +476,12 @@ impl Parser {
                         "x" | "z" => Expr::Variable,
                         "i" | "j" => Expr::Constant(C::new(0.0, 1.0)),
                         "pi" => Expr::Constant(C::new(std::f64::consts::PI, 0.0)),
-                        "tau" => Expr::Constant(C::new(std::f64::consts::TAU, 0.0)),
+                        "tau" | "\u{3c4}" => Expr::Constant(C::new(std::f64::consts::TAU, 0.0)),
                         "e" => Expr::Constant(C::new(std::f64::consts::E, 0.0)),
                         "inf" | "infinity" => Expr::Constant(C::new(f64::INFINITY, 0.0)),
                         "nan" => Expr::Constant(C::new(f64::NAN, 0.0)),
-                        _ => return Err(self.error(&format!("unknown identifier `{name}`"))),
+                        _ => named_constant(&name)
+                            .ok_or_else(|| self.error(&format!("unknown identifier `{name}`")))?,
                     };
                     self.bump();
                     Ok(expr)
@@ -493,7 +558,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                         .map_err(|_| format!("invalid number `{text}` at byte {pos}"))?,
                 )
             }
-            _ if ch == '_' || ch.is_alphabetic() => {
+            _ if ch == '_' || ch == '\u{221a}' || ch.is_alphabetic() => {
                 let mut end = i + 1;
                 while chars
                     .get(end)
@@ -614,6 +679,130 @@ mod tests {
             ("cbrt(8)", C::new(2.0, 0.0)),
         ] {
             assert_close(eval(source, x), expected);
+        }
+    }
+
+    #[test]
+    fn named_constants_and_their_aliases_resolve_to_the_reference_values() {
+        // Parsed decimal text: some of these as float literals trip clippy::approx_constant.
+        for (names, value) in [
+            ("pi \u{3c0}", "3.141592653589793"),
+            ("e", "2.718281828459045"),
+            ("tau \u{3c4}", "6.283185307179586"),
+            ("phi \u{3c6} golden", "1.618033988749895"),
+            ("gamma \u{3b3} eulergamma", "0.5772156649015329"),
+            ("catalan", "0.915965594177219"),
+            ("apery zeta3", "1.2020569031595942"),
+            ("zeta2 basel", "1.6449340668482264"),
+            ("ln2", "0.6931471805599453"),
+            ("ln10", "2.302585092994046"),
+            ("sqrt2 \u{221a}2", "1.4142135623730951"),
+            ("sqrt3 \u{221a}3", "1.7320508075688772"),
+            ("sqrt5 \u{221a}5", "2.23606797749979"),
+            ("sqrtpi \u{221a}\u{3c0}", "1.772453850905516"),
+            ("halfpi", "1.5707963267948966"),
+            ("eta \u{3b7} towermax", "1.444667861009766"),
+            ("towermin", "0.06598803584531254"),
+            ("einv", "0.36787944117144233"),
+            ("omega \u{3a9}", "0.5671432904097838"),
+            ("dottie", "0.7390851332151607"),
+            ("gelfond", "23.14069263277927"),
+            ("gelfondschneider", "2.665144142690225"),
+            ("ramanujan", "2.6253741264076874e+17"),
+            ("silver", "2.414213562373095"),
+            ("plastic", "1.324717957244746"),
+            ("supergolden", "1.465571231876768"),
+            ("tribonacci", "1.8392867552141612"),
+            ("lemniscate \u{3d6}", "2.6220575542921196"),
+            ("gauss", "0.8346268416740732"),
+            ("levy", "3.2758229187218113"),
+            ("khinchin", "2.6854520010653062"),
+            ("erdosborwein", "1.6066951524152917"),
+            ("cahen", "0.643410546288338"),
+            ("recfib", "3.3598856662431777"),
+            ("gompertz", "0.5963473623231941"),
+            ("soldner", "1.451369234883381"),
+            ("laplace", "0.6627434193491816"),
+            ("parabolic", "2.295587149392638"),
+            ("deg degree", "0.017453292519943295"),
+            ("niven", "1.7052111401053678"),
+            ("twinprime", "0.6601618158468696"),
+            ("mertens", "0.26149721284764277"),
+        ] {
+            let value: f64 = value.parse().unwrap();
+            for name in names.split(' ') {
+                for source in [name.to_owned(), name.to_ascii_uppercase()] {
+                    let actual = eval(&source, C::new(0.0, 0.0));
+                    assert_eq!(
+                        (actual.re.to_bits(), actual.im),
+                        (value.to_bits(), 0.0),
+                        "{source}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn named_constants_combine_with_operators_functions_and_implicit_multiplication() {
+        let x = C::new(3.0, 0.0);
+        assert_eq!(eval("2*pi", x), eval("tau", x));
+        for (source, expected) in [
+            ("eta^e", std::f64::consts::E),
+            ("-towermin", -0.06598803584531254),
+            ("phi^2 - phi - 1", 0.0),
+            ("omega*exp(omega)", 1.0),
+            ("cos(dottie) - dottie", 0.0),
+            ("90deg/halfpi", 1.0),
+            ("2sqrt2 - \u{221a}2 x + silver", 1.0),
+            ("ln(gelfond)/\u{3c0}", 1.0),
+        ] {
+            assert_close(eval(source, x), C::new(expected, 0.0));
+        }
+    }
+
+    #[test]
+    fn gamma_is_the_function_before_a_parenthesis_and_the_constant_elsewhere() {
+        let x = C::new(3.0, 0.0);
+        for (source, expected) in [
+            ("gamma(5)", 24.0),
+            ("2gamma (x)", 4.0),
+            ("gamma", 0.5772156649015329),
+            ("GAMMA*2 - 2eulergamma", 0.0),
+            ("gamma^2 - \u{3b3}(gamma)", 0.0),
+            ("gamma(gamma + 4 - eulergamma)", 6.0),
+        ] {
+            assert_close(eval(source, x), C::new(expected, 0.0));
+        }
+    }
+
+    #[test]
+    fn unknown_identifiers_and_bare_function_names_still_fail_as_before() {
+        for (source, error) in [
+            ("bogus", "unknown identifier `bogus` at byte 0"),
+            ("2*sqrt7", "unknown identifier `sqrt7` at byte 2"),
+            ("goldenratio", "unknown identifier `goldenratio` at byte 0"),
+            ("\u{221a}7", "unknown identifier `\u{221a}7` at byte 0"),
+            ("tgamma", "expected `(` after function name at byte 6"),
+            ("sin + 1", "expected `(` after function name at byte 4"),
+        ] {
+            assert_eq!(Expression::parse(source).unwrap_err(), error, "{source}");
+        }
+    }
+
+    #[test]
+    fn reports_variables_anywhere_in_an_expression() {
+        for source in ["x", "-Z", "2pi + sin(1 - x)", "2^^(1/z)", "slog(e, x)"] {
+            assert!(
+                Expression::parse(source).unwrap().uses_variable(),
+                "{source}"
+            );
+        }
+        for source in ["2pi", "-sqrt(2) + i", "eta^^2", "ssrt(pi, gamma(3))"] {
+            assert!(
+                !Expression::parse(source).unwrap().uses_variable(),
+                "{source}"
+            );
         }
     }
 

@@ -86,6 +86,52 @@ fn all_failed_samples_report_the_solver_error_without_opening_a_window() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn coordinate_expressions_run_tet_before_the_calculation_starts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let program = directory.path().join("tet");
+    std::fs::write(
+        &program,
+        "#!/bin/sh\necho \"$@\" > \"$0.args\"\n\
+         [ \"$4\" = 2 ] || { echo 'unsupported height' >&2; exit 1; }\n\
+         echo '1.8371173070873836 0'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let run = |path: &std::path::Path, args: &[&str]| {
+        let output = command().env("PATH", path).args(args).output().unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stderr) = run(directory.path(), &["1/0", "1.5^^2", "0", "3", "0", "2"]);
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("sample 1 at x=1.8371173070873836+0i"));
+    assert!(stderr.contains("no finite values"));
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("tet.args")).unwrap(),
+        "10 1.5 0 2 0\n"
+    );
+
+    let (code, stderr) = run(directory.path(), &["x", "0", "0", "1.5^^3", "0"]);
+    assert_eq!(code, Some(2));
+    assert!(stderr.starts_with("error: plot_to_re must be"));
+    assert!(stderr.contains("got '1.5^^3': tet exited with"));
+    assert!(stderr.contains("unsupported height"));
+
+    let empty = tempfile::tempdir().unwrap();
+    let (code, stderr) = run(empty.path(), &["x", "1.5^^2", "0", "3", "0"]);
+    assert_eq!(code, Some(2));
+    assert!(stderr.starts_with("error: plot_from_re must be"));
+    assert!(stderr.contains("ensure the tet executable is on PATH"));
+    assert!(!stderr.contains("Calculating"));
+}
+
 #[test]
 fn all_nonfinite_expression_results_fail_without_needing_tet_or_a_display() {
     let directory = tempfile::tempdir().unwrap();

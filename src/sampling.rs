@@ -120,6 +120,20 @@ fn calculate_with(
     })
 }
 
+pub fn tet(
+    program: &Path,
+    operation: Operation,
+    a: Complex64,
+    b: Complex64,
+) -> Result<Complex64, String> {
+    evaluate(program, operation, a, b).map_err(|err| match err {
+        SampleError::Launch(err) => {
+            format!("could not run tet: {err}; ensure the tet executable is on PATH")
+        }
+        SampleError::Missing(reason) => reason,
+    })
+}
+
 fn evaluate(
     program: &Path,
     operation: Operation,

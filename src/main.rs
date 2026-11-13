@@ -11,7 +11,9 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 fn main() -> ExitCode {
-    let config = match Config::parse(std::env::args().skip(1)) {
+    let config = match Config::parse(std::env::args().skip(1), &mut |operation, a, b| {
+        sampling::tet(Path::new("tet"), operation, a, b)
+    }) {
         Ok(Some(config)) => config,
         Ok(None) => {
             print!("{USAGE}");

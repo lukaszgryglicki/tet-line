@@ -1,4 +1,4 @@
-use crate::expression::Expression;
+use crate::expression::{Expression, Operation};
 use num_complex::Complex64;
 
 pub const USAGE: &str = "\
@@ -18,6 +18,17 @@ Operators: + - * / ^ ^^, parentheses and implicit multiplication (2x, 3i).
 Constants: i, j, pi, tau, e. Functions match rust-opengl-complex-drawer, including
 sin, cos, tan, exp, ln, log, sqrt, abs, arg, re, im, conj, pow, gamma and factorial.
 slog(b,z) (or ate) is the height h and ssrt(z,h) (or sroot) the base b in b^^h = z.
+Named real constants (aliases after /): pi, e, tau, phi/golden, gamma/eulergamma
+(gamma( is still the function), catalan, apery/zeta3, zeta2/basel, ln2, ln10, sqrt2,
+sqrt3, sqrt5, sqrtpi, halfpi, eta/towermax = e^(1/e), towermin = e^(-e), einv,
+omega, dottie, gelfond, gelfondschneider, ramanujan, silver, plastic, supergolden,
+tribonacci, lemniscate, gauss, levy, khinchin, erdosborwein, cahen, recfib,
+gompertz, soldner, laplace, parabolic, deg/degree, niven, twinprime, mertens.
+Unicode aliases: \u{3c0}, \u{3c4}, \u{3c6}, \u{3b3}, \u{3b7}, \u{3a9}, \u{3d6} (lemniscate), \
+\u{221a}2, \u{221a}3, \u{221a}5, \u{221a}\u{3c0}.
+A coordinate that is not a plain number is a constant expression without x or z,
+evaluated once (^^, slog and ssrt run tet) to a finite real value: -pi 0 tau/3 0,
+'pi*e^e-pow(2, 0.5)' or 1.5^^2; as base_re it needs number_of_points.
 Use --expr=EXPRESSION for numeric constants with a point count; six/seven
 numeric positionals retain the original fixed-base tetration format.
 
@@ -47,7 +58,10 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Option<Self>, String> {
+    pub fn parse(
+        args: impl IntoIterator<Item = String>,
+        tet: &mut impl FnMut(Operation, Complex64, Complex64) -> Result<Complex64, String>,
+    ) -> Result<Option<Self>, String> {
         let mut positional = Vec::new();
         let mut screenshot = None;
         let mut expression = None;
@@ -112,6 +126,15 @@ impl Config {
             .zip(&positional)
             .zip(&names[offset..])
         {
+            if arg.parse::<f64>().is_err() {
+                *number = constant_expression(arg, tet).map_err(|reason| {
+                    format!(
+                        "{name} must be a finite number or a constant expression without \
+                         variables, got '{arg}': {reason}"
+                    )
+                })?;
+                continue;
+            }
             *number = arg
                 .parse::<f64>()
                 .ok()
@@ -153,6 +176,22 @@ impl Config {
     }
 }
 
+fn constant_expression(
+    source: &str,
+    tet: &mut impl FnMut(Operation, Complex64, Complex64) -> Result<Complex64, String>,
+) -> Result<f64, String> {
+    let expression = Expression::parse(source)?;
+    if expression.uses_variable() {
+        return Err("it contains a variable".to_owned());
+    }
+    let value = expression.evaluate(Complex64::new(0.0, 0.0), tet)?;
+    if value.is_finite() && value.im.abs() <= 1e-12 * value.re.abs().max(1.0) {
+        Ok(value.re)
+    } else {
+        Err(format!("its value {value} is not a finite real number"))
+    }
+}
+
 pub fn interpolate(from: f64, to: f64, t: f64) -> f64 {
     if t == 0.0 {
         from
@@ -174,7 +213,9 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Option<Config>, String> {
-        Config::parse(args.iter().map(|arg| arg.to_string()))
+        Config::parse(args.iter().map(|arg| arg.to_string()), &mut |_, _, _| {
+            Err("unexpected tet".to_owned())
+        })
     }
 
     #[test]
@@ -353,5 +394,120 @@ mod tests {
         assert!(parse(&["--expr=x", "--expr=x", "0", "0", "1", "0"]).is_err());
         assert!(parse(&["--expr=", "0", "0", "1", "0"]).is_err());
         assert!(parse(&["x", "0", "0", "1"]).is_err());
+    }
+
+    #[test]
+    fn coordinates_accept_constant_expressions_and_plain_numbers_parse_as_before() {
+        let config = parse(&["x", "-2.5", "-pi", "pi*e^e-pow(2, 0.5)", "sqrt(2)+ETA", "3"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(config.from, Complex64::new(-2.5, -std::f64::consts::PI));
+        assert!((config.to.re - 46.19430536603135).abs() < 1e-12);
+        assert!((config.to.im - (std::f64::consts::SQRT_2 + 1.444667861009766)).abs() < 1e-12);
+        assert_eq!(config.points, 3);
+        let config = parse(&["--expr=x", "exp(i*pi)", "1e-3", "tau/3", "-2*e"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(config.from, Complex64::new(-1.0, 0.001));
+        assert!((config.to.re - std::f64::consts::TAU / 3.0).abs() < 1e-12);
+        assert_eq!(config.to.im, -2.0 * std::f64::consts::E);
+        let config = parse(&["x", "1+1e-13i", "1e6+1e-7i", "1", "0"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(config.from, Complex64::new(1.0, 1e6));
+        for bad in ["inf", "-Infinity", "nan", "1e999"] {
+            assert_eq!(
+                parse(&["x", "0", "0", bad, "0"]).unwrap_err(),
+                format!("plot_to_re must be a finite number, got '{bad}'")
+            );
+        }
+        assert_eq!(
+            parse(&["x", "0", "0", "1", "0", "pi"]).unwrap_err(),
+            "number_of_points must be an integer of at least 2"
+        );
+    }
+
+    #[test]
+    fn coordinates_reject_variables_nonreal_values_and_failed_evaluations() {
+        for (coordinate, reason) in [
+            ("x+1", "it contains a variable"),
+            ("2sin(Z)", "it contains a variable"),
+            ("sqrt(-4)", "its value 0-2i is not a finite real number"),
+            ("1+1e-11i", "is not a finite real number"),
+            ("2*inf", "is not a finite real number"),
+            ("(pi", "expected `)` at byte 3"),
+            ("towermax2", "unknown identifier `towermax2` at byte 0"),
+            ("2^^3", "unexpected tet"),
+        ] {
+            let error = parse(&["x", "0", coordinate, "1", "0"]).unwrap_err();
+            let start = format!(
+                "plot_from_im must be a finite number or a constant expression without \
+                 variables, got '{coordinate}': "
+            );
+            assert!(
+                error.starts_with(&start) && error.ends_with(reason),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn coordinate_expressions_run_tet_and_keep_the_argument_forms() {
+        let mut calls = Vec::new();
+        let config = Config::parse(
+            ["x", "1.5^^2", "0", "ate(2, 16) + 1", "0"].map(str::to_owned),
+            &mut |operation, a, b| {
+                calls.push((operation, a, b));
+                Ok(Complex64::new(1.8371173070873836, 0.0))
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(config.from, Complex64::new(1.8371173070873836, 0.0));
+        assert_eq!(config.to, Complex64::new(1.8371173070873836 + 1.0, 0.0));
+        assert_eq!(
+            calls,
+            [
+                (
+                    Operation::Tetration,
+                    Complex64::new(1.5, 0.0),
+                    Complex64::new(2.0, 0.0)
+                ),
+                (
+                    Operation::SuperLog,
+                    Complex64::new(2.0, 0.0),
+                    Complex64::new(16.0, 0.0)
+                ),
+            ]
+        );
+        let base = |args: &[&str]| {
+            let config = parse(args).unwrap().unwrap();
+            let mut base = None;
+            config
+                .function
+                .evaluate(config.from, &mut |_, a, _| {
+                    base = Some(a);
+                    Ok::<_, ()>(a)
+                })
+                .unwrap();
+            (base, config.from, config.points)
+        };
+        let eta = 1.444667861009766;
+        assert_eq!(
+            base(&["2", "eta", "-pi", "0", "pi", "0"]),
+            (
+                Some(Complex64::new(2.0, eta)),
+                Complex64::new(-std::f64::consts::PI, 0.0),
+                512
+            )
+        );
+        assert_eq!(
+            base(&["eta", "0", "-2", "0", "2", "0", "5"]),
+            (Some(Complex64::new(eta, 0.0)), Complex64::new(-2.0, 0.0), 5)
+        );
+        assert_eq!(
+            base(&["eta", "0", "-2", "0", "2", "5"]),
+            (None, Complex64::new(0.0, -2.0), 5)
+        );
     }
 }
