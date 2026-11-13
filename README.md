@@ -92,15 +92,15 @@ Expressions are parsed once before calculation. Every evaluated `base^^height`
 subexpression runs:
 
 ```text
-tet 10 base_re base_im height_re height_im
+tet 13 base_re base_im height_re height_im
 ```
 
 Every evaluated `slog(b, z)` and `ssrt(z, h)` runs one of the solver's inverse modes
 (a `tet` build that has them is required), with the arguments in the order written:
 
 ```text
-tet -q --slog 10 b_re b_im z_re z_im
-tet -q --sroot 10 z_re z_im h_re h_im
+tet -q --slog 13 b_re b_im z_re z_im
+tet -q --sroot 13 z_re z_im h_re h_im
 ```
 
 `SILENT=1` suppresses solver progress without requiring a particular quiet flag;
@@ -121,7 +121,7 @@ and final results outside finite `f64` range leave **gaps**, not connections acr
 missing points. Nonfinite tetration operands are skipped without starting `tet`.
 An unavailable executable when needed, or a line with no finite results, is an error.
 The viewer inherits the installed solver's mathematical coverage and accuracy;
-10-digit working precision is not a certified error bound.
+13-digit working precision is not a certified error bound.
 
 ## Plot and controls
 

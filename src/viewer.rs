@@ -103,7 +103,7 @@ pub async fn run(config: Config, plot: Plot) {
             config.points,
             config.points - plot.finite_count,
             if config.function.uses_tet() {
-                " (tet: 10 digits)"
+                " (tet: 13 digits)"
             } else {
                 ""
             }

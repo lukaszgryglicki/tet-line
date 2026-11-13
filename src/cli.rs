@@ -32,7 +32,7 @@ evaluated once (^^, slog and ssrt run tet) to a finite real value: -pi 0 tau/3 0
 Use --expr=EXPRESSION for numeric constants with a point count; six/seven
 numeric positionals retain the original fixed-base tetration format.
 
-Each ^^ runs PATH's tet at 10-digit precision; other math is evaluated locally.
+Each ^^ runs PATH's tet at 13-digit precision; other math is evaluated locally.
 slog/ssrt run tet's --slog/--sroot modes; ssrt at non-integer heights can be slow.
 Uses all available CPUs. Expressions without ^^, slog or ssrt do not need tet.
 Failed/nonfinite samples leave gaps. Exploration never recalculates values.

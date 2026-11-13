@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
-pub const PRECISION: usize = 10;
+pub const PRECISION: usize = 13;
 
 pub struct Samples {
     pub values: Vec<Option<Complex64>>,
@@ -291,7 +291,7 @@ mod tests {
         std::fs::write(
             &program,
             r#"#!/bin/sh
-if [ "$#" -ne 5 ] || [ "$1" != 10 ] || [ "$2" != 1.333 ] || [ "$3" != -0.06 ] ||
+if [ "$#" -ne 5 ] || [ "$1" != 13 ] || [ "$2" != 1.333 ] || [ "$3" != -0.06 ] ||
    [ "$SILENT" != 1 ] || [ "$RAYON_NUM_THREADS" != 1 ]; then
     echo 'incorrect invocation' >&2
     exit 2
@@ -390,7 +390,7 @@ fi
         std::fs::write(
             &program,
             r#"#!/bin/sh
-if [ "$#" -ne 5 ] || [ "$1" != 10 ] || [ "$SILENT" != 1 ] || [ "$RAYON_NUM_THREADS" != 1 ]; then
+if [ "$#" -ne 5 ] || [ "$1" != 13 ] || [ "$SILENT" != 1 ] || [ "$RAYON_NUM_THREADS" != 1 ]; then
     echo 'incorrect invocation' >&2
     exit 2
 fi
@@ -432,9 +432,9 @@ if [ "$SILENT" != 1 ] || [ "$RAYON_NUM_THREADS" != 1 ]; then
     exit 2
 fi
 case "$#,$1,$2,$3" in
-    5,10,*) mode=tet; result=1 ;;
-    7,-q,--slog,10) mode=slog; result=10; shift 2 ;;
-    7,-q,--sroot,10) mode=sroot; result=100; shift 2 ;;
+    5,13,*) mode=tet; result=1 ;;
+    7,-q,--slog,13) mode=slog; result=10; shift 2 ;;
+    7,-q,--sroot,13) mode=sroot; result=100; shift 2 ;;
     *) echo 'incorrect invocation' >&2; exit 2 ;;
 esac
 printf '%s %s %s %s %s\n' "$mode" "$2" "$3" "$4" "$5" >> "$0.calls"

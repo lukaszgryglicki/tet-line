@@ -115,7 +115,7 @@ fn coordinate_expressions_run_tet_before_the_calculation_starts() {
     assert!(stderr.contains("no finite values"));
     assert_eq!(
         std::fs::read_to_string(directory.path().join("tet.args")).unwrap(),
-        "10 1.5 0 2 0\n"
+        "13 1.5 0 2 0\n"
     );
 
     let (code, stderr) = run(directory.path(), &["x", "0", "0", "1.5^^3", "0"]);
