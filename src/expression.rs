@@ -102,7 +102,7 @@ impl Expr {
         x: C,
         tet: &mut impl FnMut(Operation, C, C) -> Result<C, E>,
     ) -> Result<C, E> {
-        Ok(match self {
+        let value = match self {
             Self::Constant(value) => *value,
             Self::Variable => x,
             Self::Negate(arg) => -arg.evaluate(x, tet)?,
@@ -128,12 +128,21 @@ impl Expr {
                     None => eval_function(name, &values[..args.len()]),
                 }
             }
-        })
+        };
+        Ok(unsigned_zeros(value))
     }
+}
+
+/// A zero part has no sign, as in `tet`: `-4` is `-4 + 0i`, on the upper side of
+/// the branch cuts, so `sqrt(-4)` is `2i` and `ln(-1)` is `pi i`.
+fn unsigned_zeros(value: C) -> C {
+    let part = |part: f64| if part == 0.0 { 0.0 } else { part };
+    C::new(part(value.re), part(value.im))
 }
 
 fn solver_operation(name: &str) -> Option<Operation> {
     match name {
+        "tet" => Some(Operation::Tetration),
         "slog" | "ate" => Some(Operation::SuperLog),
         "ssrt" | "sroot" => Some(Operation::SuperRoot),
         _ => None,
@@ -304,7 +313,7 @@ fn function_arity(name: &str) -> Option<(usize, usize)> {
         | "fact" => Some((1, 1)),
         "pow" | "powc" | "powf" | "powi" | "powu" | "root" | "scale" | "unscale" | "fdiv"
         | "complex" | "rect" | "new" | "polar" | "from_polar" | "minabs" | "maxabs" | "avg"
-        | "expf" | "slog" | "ate" | "ssrt" | "sroot" => Some((2, 2)),
+        | "expf" | "tet" | "slog" | "ate" | "ssrt" | "sroot" => Some((2, 2)),
         "log" => Some((1, 2)),
         _ => None,
     }
@@ -670,15 +679,41 @@ mod tests {
             ("abs(3+4i)", C::new(5.0, 0.0)),
             ("log(8,2)", C::new(3.0, 0.0)),
             ("pow(i,2)", C::new(-1.0, 0.0)),
-            ("root(-1,2)", C::new(0.0, -1.0)),
+            ("root(-1,2)", C::new(0.0, 1.0)),
             ("root(complex(-1,0),2)", C::new(0.0, 1.0)),
             ("polar(2,pi/2)", C::new(0.0, 2.0)),
             ("complex(2,-3)", C::new(2.0, -3.0)),
-            ("sqrt(-4)", C::new(0.0, -2.0)),
+            ("sqrt(-4)", C::new(0.0, 2.0)),
             ("sqrt(complex(-4,0))", C::new(0.0, 2.0)),
             ("cbrt(8)", C::new(2.0, 0.0)),
         ] {
             assert_close(eval(source, x), expected);
+        }
+    }
+
+    #[test]
+    fn zero_parts_have_no_sign_so_negative_reals_take_the_principal_values() {
+        let x = C::new(4.0, 0.0);
+        let half_turn = std::f64::consts::PI;
+        let cube_root = C::new(1.0, 3.0_f64.sqrt());
+        for (source, expected) in [
+            ("sqrt(-x)", C::new(0.0, 2.0)),
+            ("sqrt(x/-1)", C::new(0.0, 2.0)),
+            ("sqrt(-2*-2 - 8)", C::new(0.0, 2.0)),
+            ("sqrt(conj(-x))", C::new(0.0, 2.0)),
+            ("ln(-1)", C::new(0.0, half_turn)),
+            ("arg(-x)", C::new(half_turn, 0.0)),
+            ("(-8)^(1/3)", cube_root),
+            ("cbrt(-8)", cube_root),
+        ] {
+            assert_close(eval(source, x), expected);
+        }
+        for source in ["-0", "-0i", "0*-x", "conj(x)", "-x + x"] {
+            let value = eval(source, x);
+            assert!(
+                value.re.is_sign_positive() && value.im.is_sign_positive(),
+                "{source}: {value:?}"
+            );
         }
     }
 
@@ -1025,6 +1060,38 @@ mod tests {
                 (Operation::SuperLog, x, tet),
             ]
         );
+    }
+
+    #[test]
+    fn tet_function_is_the_tetration_operator() {
+        let x = C::new(1.3, -0.2);
+        let run = |source: &str| {
+            let mut calls = Vec::new();
+            let value = Expression::parse(source)
+                .unwrap()
+                .evaluate(x, &mut |operation, a, b| {
+                    calls.push((operation, a, b));
+                    Ok::<_, ()>(a + 2.0 * b)
+                })
+                .unwrap();
+            (value, calls)
+        };
+        assert_eq!(run("tet(2+i, x)"), run("(2+i)^^x"));
+        let (value, calls) = run("3TET(x, tet(2, i))");
+        let inner = C::new(2.0, 2.0);
+        assert_close(value, 3.0 * (x + 2.0 * inner));
+        assert_eq!(
+            calls,
+            [
+                (Operation::Tetration, C::new(2.0, 0.0), C::new(0.0, 1.0)),
+                (Operation::Tetration, x, inner),
+            ]
+        );
+        assert!(Expression::parse("tet(2, x)").unwrap().uses_tet());
+        for source in ["tet(x)", "tet(x, 2, 3)", "tet", "tet x, 2"] {
+            let error = Expression::parse(source).unwrap_err();
+            assert!(error.contains("byte"), "{source}: {error}");
+        }
     }
 
     #[test]

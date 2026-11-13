@@ -79,17 +79,21 @@ chosen line. Quote expressions to protect operators and parentheses from the she
   `pow`, `root`, `abs`, `arg`, `re`, `im`, `conj`, `complex`, `polar`,
   rounding, finite-value predicates, `gamma`, `factorial`, and the drawer's aliases.
   Powers, logarithms and roots follow `num-complex`'s principal branches.
+  A zero real or imaginary part has no sign, as in `tet`, so a negative real number
+  is on the upper side of a branch cut: `sqrt(-4)` is `2i`, `ln(-1)` is `pi i`,
+  `(-8)^(1/3)` and `cbrt(-8)` are `1 + 1.732i`.
+- `tet(b, h)` is `b^^h` written as a function: `tet(x, x)` is `x^^x`.
 - Inverse tetration, solving `b^^h = z` through `tet`: `slog(b, z)` (alias `ate`) is
   the super-logarithm, the height `h`; `ssrt(z, h)` (alias `sroot`) is the super-root,
   the base `b`. Both arguments can be expressions: `x^^x + ate(2+i, x) - ssrt(x, 1.5-i)`.
 - A line or base coordinate that is not a plain number is a constant expression in this
-  syntax without `x`/`z`, evaluated once to a finite real value (`^^`, `slog` and `ssrt`
-  run `tet`): `tet-line 'sin(x)' -pi 0 tau/3 0`, `'pi*e^e-pow(2, 0.5)'`, `1.5^^2`.
+  syntax without `x`/`z`, evaluated once to a finite real value (`^^`, `tet`, `slog` and
+  `ssrt` run `tet`): `tet-line 'sin(x)' -pi 0 tau/3 0`, `'pi*e^e-pow(2, 0.5)'`, `1.5^^2`.
   As `base_re` it needs the point count, because a first argument that is not a plain
   number is otherwise the expression; the point count itself stays an integer.
 
 Expressions are parsed once before calculation. Every evaluated `base^^height`
-subexpression runs:
+or `tet(base, height)` subexpression runs:
 
 ```text
 tet 13 base_re base_im height_re height_im
@@ -108,8 +112,8 @@ stdout must contain the real and imaginary results as two numbers. The program
 uses all available CPU cores (up to the point count), with one `tet` process per
 worker at a time. Multiple `tet` operations within one sample run sequentially;
 their operands may themselves be expressions. Each child gets `RAYON_NUM_THREADS=1`
-to avoid nested oversubscription. Expressions without `^^`, `slog` or `ssrt` never
-invoke `tet`. On 16 available CPUs, at most 16 samples are evaluated concurrently.
+to avoid nested oversubscription. Expressions without `^^`, `tet`, `slog` or `ssrt`
+never invoke `tet`. On 16 available CPUs, at most 16 samples are evaluated concurrently.
 
 A super-root at a non-integer height can take seconds to minutes per sample, so
 start with a small point count. An inverse that `tet` cannot find and verify, such

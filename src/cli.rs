@@ -15,8 +15,10 @@ Line/base coordinates must be finite; negative arguments need no extra flags.
 Quote expressions. x (or z) is the complex point on the argument line.
 Operators: + - * / ^ ^^, parentheses and implicit multiplication (2x, 3i).
 ^^ is tetration and binds tighter than ^; both associate right, before unary -.
+tet(b,h) is b^^h written as a function.
 Constants: i, j, pi, tau, e. Functions match rust-opengl-complex-drawer, including
 sin, cos, tan, exp, ln, log, sqrt, abs, arg, re, im, conj, pow, gamma and factorial.
+A zero has no sign, as in tet: sqrt(-4) is 2i and ln(-1) is pi i.
 slog(b,z) (or ate) is the height h and ssrt(z,h) (or sroot) the base b in b^^h = z.
 Named real constants (aliases after /): pi, e, tau, phi/golden, gamma/eulergamma
 (gamma( is still the function), catalan, apery/zeta3, zeta2/basel, ln2, ln10, sqrt2,
@@ -27,14 +29,14 @@ gompertz, soldner, laplace, parabolic, deg/degree, niven, twinprime, mertens.
 Unicode aliases: \u{3c0}, \u{3c4}, \u{3c6}, \u{3b3}, \u{3b7}, \u{3a9}, \u{3d6} (lemniscate), \
 \u{221a}2, \u{221a}3, \u{221a}5, \u{221a}\u{3c0}.
 A coordinate that is not a plain number is a constant expression without x or z,
-evaluated once (^^, slog and ssrt run tet) to a finite real value: -pi 0 tau/3 0,
+evaluated once (^^, tet, slog and ssrt run tet) to a finite real value: -pi 0 tau/3 0,
 'pi*e^e-pow(2, 0.5)' or 1.5^^2; as base_re it needs number_of_points.
 Use --expr=EXPRESSION for numeric constants with a point count; six/seven
 numeric positionals retain the original fixed-base tetration format.
 
-Each ^^ runs PATH's tet at 13-digit precision; other math is evaluated locally.
+Each ^^ or tet(b,h) runs PATH's tet at 13-digit precision; other math is local.
 slog/ssrt run tet's --slog/--sroot modes; ssrt at non-integer heights can be slow.
-Uses all available CPUs. Expressions without ^^, slog or ssrt do not need tet.
+Uses all available CPUs. Expressions without ^^, tet, slog or ssrt do not need tet.
 Failed/nonfinite samples leave gaps. Exploration never recalculates values.
 x = position along the complex argument line, y = Re(result), z = Im(result).
 
@@ -432,7 +434,7 @@ mod tests {
         for (coordinate, reason) in [
             ("x+1", "it contains a variable"),
             ("2sin(Z)", "it contains a variable"),
-            ("sqrt(-4)", "its value 0-2i is not a finite real number"),
+            ("sqrt(-4)", "its value 0+2i is not a finite real number"),
             ("1+1e-11i", "is not a finite real number"),
             ("2*inf", "is not a finite real number"),
             ("(pi", "expected `)` at byte 3"),
