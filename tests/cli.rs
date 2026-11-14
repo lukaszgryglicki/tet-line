@@ -118,6 +118,14 @@ fn coordinate_expressions_run_tet_before_the_calculation_starts() {
         "13 1.5 0 2 0\n"
     );
 
+    let (code, stderr) = run(directory.path(), &["1/0", "1.5^^2 + i", "3", "2"]);
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("sample 1 at x=1.8371173070873836+1i"));
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("tet.args")).unwrap(),
+        "13 1.5 0 2 0\n"
+    );
+
     let (code, stderr) = run(directory.path(), &["x", "0", "0", "1.5^^3", "0"]);
     assert_eq!(code, Some(2));
     assert!(stderr.starts_with("error: plot_to_re must be"));

@@ -4,12 +4,16 @@ use num_complex::Complex64;
 pub const USAGE: &str = "\
 Usage: tet-line [--screenshot=FILE.png] <expression> \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
+       tet-line [--screenshot=FILE.png] <expression> <plot_from> <plot_to> [number_of_points]
        tet-line [--screenshot=FILE.png] --expr=EXPRESSION \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
+       tet-line [--screenshot=FILE.png] --expr=EXPRESSION <plot_from> <plot_to> [number_of_points]
        tet-line [--screenshot=FILE.png] <base_re> <base_im> \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
 
 Draw a complex function along the inclusive line from plot_from to plot_to.
+The two ends of the line are four real coordinates, or two complex points:
+-2 -1 2 1 and -2-i 2+i are the same line.
 The number of points defaults to 512 and must be at least 2.
 Line/base coordinates must be finite; negative arguments need no extra flags.
 Quote expressions. x (or z) is the complex point on the argument line.
@@ -31,6 +35,8 @@ Unicode aliases: \u{3c0}, \u{3c4}, \u{3c6}, \u{3b3}, \u{3b7}, \u{3a9}, \u{3d6} (
 A coordinate that is not a plain number is a constant expression without x or z,
 evaluated once (^^, tet, slog and ssrt run tet) to a finite real value: -pi 0 tau/3 0,
 'pi*e^e-pow(2, 0.5)' or 1.5^^2; as base_re it needs number_of_points.
+plot_from and plot_to are such expressions with a finite complex value:
+'e^-e' e, -2-i 2+i or 'exp(i*pi/4)' '2^^0.5'.
 Use --expr=EXPRESSION for numeric constants with a point count; six/seven
 numeric positionals retain the original fixed-base tetration format.
 
@@ -46,7 +52,9 @@ Keys: A/D W/S Q/E rotate, Z/X zoom, R auto-rotate, 0 reset, P save PNG, F1 help,
 -h, --help prints this help without opening a window.
 
 Examples: tet-line 'x^^x-x^x+x' 1 0 2 0
+          tet-line 'x^^x-x^x+x' 1 2
           tet-line 'sin(x)+exp(i*x)' -2 0 2 0
+          tet-line 'sin(x)+exp(i*x)' -2-i 2+i 1024
           tet-line 1.333 -0.06 -2 0 2 0
 ";
 
@@ -100,48 +108,76 @@ impl Config {
         }
 
         if expression.is_none()
-            && (positional.len() == 5
+            && ((3..=5).contains(&positional.len())
                 || (positional.len() == 6 && positional[0].parse::<f64>().is_err()))
         {
             expression = Some(positional.remove(0));
         }
-        let coordinate_count = if expression.is_some() { 4 } else { 6 };
-        if !(coordinate_count..=coordinate_count + 1).contains(&positional.len()) {
-            return Err(
-                "expected an expression and four coordinates, or six legacy coordinates, \
-                 followed by an optional point count"
-                    .to_owned(),
-            );
-        }
-        let mut numbers = [0.0; 6];
-        let offset = 6 - coordinate_count;
-        let names = [
-            "base_re",
-            "base_im",
-            "plot_from_re",
-            "plot_from_im",
-            "plot_to_re",
-            "plot_to_im",
-        ];
-        for ((number, arg), name) in numbers[offset..]
-            .iter_mut()
-            .zip(&positional)
-            .zip(&names[offset..])
-        {
-            if arg.parse::<f64>().is_err() {
-                *number = constant_expression(arg, tet).map_err(|reason| {
-                    format!(
-                        "{name} must be a finite number or a constant expression without \
-                         variables, got '{arg}': {reason}"
-                    )
-                })?;
-                continue;
+        let coordinate_count = match (expression.is_some(), positional.len()) {
+            (true, 2 | 3) => 2,
+            (true, 4 | 5) => 4,
+            (false, 6 | 7) => 6,
+            _ => {
+                return Err(
+                    "expected an expression and two complex points or four real coordinates, \
+                     or six legacy coordinates, followed by an optional point count"
+                        .to_owned(),
+                )
             }
-            *number = arg
-                .parse::<f64>()
-                .ok()
-                .filter(|value| value.is_finite())
-                .ok_or_else(|| format!("{name} must be a finite number, got '{arg}'"))?;
+        };
+        let mut numbers = [0.0; 6];
+        if coordinate_count == 2 {
+            for ((point, arg), name) in numbers[2..]
+                .chunks_mut(2)
+                .zip(&positional)
+                .zip(["plot_from", "plot_to"])
+            {
+                let value = match arg.parse::<f64>() {
+                    Ok(value) => Complex64::new(value, 0.0),
+                    Err(_) => constant_value(arg, tet).map_err(|reason| {
+                        format!(
+                            "{name} must be a finite complex number or a constant expression \
+                             without variables, got '{arg}': {reason}"
+                        )
+                    })?,
+                };
+                if !value.is_finite() {
+                    return Err(format!(
+                        "{name} must be a finite complex number, got '{arg}' = {value}"
+                    ));
+                }
+                point.copy_from_slice(&[value.re, value.im]);
+            }
+        } else {
+            let offset = 6 - coordinate_count;
+            let names = [
+                "base_re",
+                "base_im",
+                "plot_from_re",
+                "plot_from_im",
+                "plot_to_re",
+                "plot_to_im",
+            ];
+            for ((number, arg), name) in numbers[offset..]
+                .iter_mut()
+                .zip(&positional)
+                .zip(&names[offset..])
+            {
+                if arg.parse::<f64>().is_err() {
+                    *number = constant_expression(arg, tet).map_err(|reason| {
+                        format!(
+                            "{name} must be a finite number or a constant expression without \
+                             variables, got '{arg}': {reason}"
+                        )
+                    })?;
+                    continue;
+                }
+                *number = arg
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite())
+                    .ok_or_else(|| format!("{name} must be a finite number, got '{arg}'"))?;
+            }
         }
         let points = match positional.get(coordinate_count) {
             Some(arg) => arg
@@ -178,15 +214,22 @@ impl Config {
     }
 }
 
-fn constant_expression(
+fn constant_value(
     source: &str,
     tet: &mut impl FnMut(Operation, Complex64, Complex64) -> Result<Complex64, String>,
-) -> Result<f64, String> {
+) -> Result<Complex64, String> {
     let expression = Expression::parse(source)?;
     if expression.uses_variable() {
         return Err("it contains a variable".to_owned());
     }
-    let value = expression.evaluate(Complex64::new(0.0, 0.0), tet)?;
+    expression.evaluate(Complex64::new(0.0, 0.0), tet)
+}
+
+fn constant_expression(
+    source: &str,
+    tet: &mut impl FnMut(Operation, Complex64, Complex64) -> Result<Complex64, String>,
+) -> Result<f64, String> {
+    let value = constant_value(source, tet)?;
     if value.is_finite() && value.im.abs() <= 1e-12 * value.re.abs().max(1.0) {
         Ok(value.re)
     } else {
@@ -454,6 +497,79 @@ mod tests {
     }
 
     #[test]
+    fn two_complex_points_are_the_ends_of_the_line() {
+        let ends = |args: &[&str]| {
+            let config = parse(args).unwrap().unwrap();
+            (config.from, config.to, config.points)
+        };
+        let line = (Complex64::new(-2.0, -1.0), Complex64::new(2.0, 1.0));
+        assert_eq!(ends(&["x", "-2", "-1", "2", "1"]), (line.0, line.1, 512));
+        for (args, points) in [
+            (&["x", "-2-i", "2+i"][..], 512),
+            (&["x", "-2-i", "2+i", "3"][..], 3),
+            (&["--expr=x", "-2-i", "2+i"][..], 512),
+            (&["--expr=x", "-i-2", "2+1i", "9"][..], 9),
+            (&["x", "conj(i-2)", "abs(2)+sqrt(-4)/2"][..], 512),
+        ] {
+            assert_eq!(ends(args), (line.0, line.1, points), "{args:?}");
+        }
+        let real = |re| Complex64::new(re, 0.0);
+        assert_eq!(ends(&["x", "1", "2.5"]), (real(1.0), real(2.5), 512));
+        assert_eq!(
+            ends(&["x", "-1e-3", "+.5", "7"]),
+            (real(-0.001), real(0.5), 7)
+        );
+        let (from, to, _) = ends(&["x", "exp(i*pi/2)", "towermin - pi*i"]);
+        assert!((from - Complex64::new(0.0, 1.0)).norm() < 1e-15);
+        let pi = std::f64::consts::PI;
+        assert_eq!(to, Complex64::new(0.06598803584531254, -pi));
+        // A number in front of two points is the expression, not a legacy base.
+        let config = parse(&["2", "0", "1"]).unwrap().unwrap();
+        assert!(!config.function.uses_tet());
+        assert_eq!((config.from, config.to), (real(0.0), real(1.0)));
+    }
+
+    #[test]
+    fn complex_points_reject_variables_nonfinite_values_and_wrong_counts() {
+        for (point, reason) in [
+            ("x+1", "it contains a variable"),
+            ("(pi", "expected `)` at byte 3"),
+            ("2^^3", "unexpected tet"),
+        ] {
+            let error = parse(&["x", "0", point]).unwrap_err();
+            let start = format!(
+                "plot_to must be a finite complex number or a constant expression without \
+                 variables, got '{point}': "
+            );
+            assert!(
+                error.starts_with(&start) && error.ends_with(reason),
+                "{error}"
+            );
+        }
+        for (point, value) in [("inf", "inf+0i"), ("1e999", "inf+0i"), ("1/0", "NaN+NaNi")] {
+            assert_eq!(
+                parse(&["--expr=x", point, "1"]).unwrap_err(),
+                format!("plot_from must be a finite complex number, got '{point}' = {value}")
+            );
+        }
+        for args in [
+            &["x", "0"][..],
+            &["--expr=x", "0"][..],
+            &["--expr=x"][..],
+            &["x"][..],
+        ] {
+            let error = parse(args).unwrap_err();
+            assert!(error.starts_with("expected an expression and two complex points"));
+        }
+        for count in ["1", "2.5", "x", "2+i"] {
+            assert_eq!(
+                parse(&["x", "0", "1", count]).unwrap_err(),
+                "number_of_points must be an integer of at least 2"
+            );
+        }
+    }
+
+    #[test]
     fn coordinate_expressions_run_tet_and_keep_the_argument_forms() {
         let mut calls = Vec::new();
         let config = Config::parse(
@@ -467,21 +583,32 @@ mod tests {
         .unwrap();
         assert_eq!(config.from, Complex64::new(1.8371173070873836, 0.0));
         assert_eq!(config.to, Complex64::new(1.8371173070873836 + 1.0, 0.0));
-        assert_eq!(
-            calls,
-            [
-                (
-                    Operation::Tetration,
-                    Complex64::new(1.5, 0.0),
-                    Complex64::new(2.0, 0.0)
-                ),
-                (
-                    Operation::SuperLog,
-                    Complex64::new(2.0, 0.0),
-                    Complex64::new(16.0, 0.0)
-                ),
-            ]
-        );
+        let expected = [
+            (
+                Operation::Tetration,
+                Complex64::new(1.5, 0.0),
+                Complex64::new(2.0, 0.0),
+            ),
+            (
+                Operation::SuperLog,
+                Complex64::new(2.0, 0.0),
+                Complex64::new(16.0, 0.0),
+            ),
+        ];
+        assert_eq!(calls, expected);
+        calls.clear();
+        let config = Config::parse(
+            ["x", "1.5^^2 - i", "ate(2, 16)i + 1", "4"].map(str::to_owned),
+            &mut |operation, a, b| {
+                calls.push((operation, a, b));
+                Ok(Complex64::new(1.8371173070873836, 0.0))
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(config.from, Complex64::new(1.8371173070873836, -1.0));
+        assert_eq!(config.to, Complex64::new(1.0, 1.8371173070873836));
+        assert_eq!((calls, config.points), (expected.to_vec(), 4));
         let base = |args: &[&str]| {
             let config = parse(args).unwrap().unwrap();
             let mut base = None;

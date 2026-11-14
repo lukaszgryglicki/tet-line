@@ -19,18 +19,27 @@ cargo build --release --locked
 
 ```text
 tet-line 'expression' plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
+tet-line 'expression' plot_from plot_to [number_of_points]
 tet-line --expr=EXPRESSION plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
+tet-line --expr=EXPRESSION plot_from plot_to [number_of_points]
 tet-line base_re base_im plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
 ```
 
+The line runs from the point `plot_from` to the point `plot_to`. Its two ends are
+four real coordinates or two complex points, told apart by the number of arguments:
+`-2 -1 2 1` and `-2-i 2+i` are the same line.
 The point count defaults to **512**, must be at least 2, and includes both endpoints.
 All line/base coordinates must be finite numbers. Negative arguments work directly.
 The original numeric form still plots `base^^x`. Six/seven numeric positionals
-retain that meaning; use `--expr=2` to plot a numeric constant with a point count.
+retain that meaning; use `--expr=2` to plot a numeric constant with four coordinates
+and a point count.
 
 ```sh
 # Complex functions without tet:
 ./target/release/tet-line 'sin(x)+exp(i*x)' -2 -1 2 1
+
+# The same line by its two complex end points, with 1024 samples:
+./target/release/tet-line 'sin(x)+exp(i*x)' -2-i 2+i 1024
 
 # An explicit complex tetration base:
 ./target/release/tet-line '(1.333-0.06i)^^x' -2 0 2 0
@@ -91,6 +100,10 @@ chosen line. Quote expressions to protect operators and parentheses from the she
   `ssrt` run `tet`): `tet-line 'sin(x)' -pi 0 tau/3 0`, `'pi*e^e-pow(2, 0.5)'`, `1.5^^2`.
   As `base_re` it needs the point count, because a first argument that is not a plain
   number is otherwise the expression; the point count itself stays an integer.
+- The two points `plot_from` and `plot_to` are constant expressions of the same kind
+  with a finite complex value: `tet-line 'x^^x' 'e^-e' e`, `-2-i 2+i`,
+  `'exp(i*pi/4)' '2^^0.5'`. Each of four coordinates has to be real instead;
+  `re(...)` and `im(...)` take the parts of any expression.
 
 Expressions are parsed once before calculation. Every evaluated `base^^height`
 or `tet(base, height)` subexpression runs:
