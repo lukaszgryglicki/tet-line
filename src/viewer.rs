@@ -184,9 +184,9 @@ fn status_lines(config: &Config, plot: &Plot, frame: usize) -> [String; 4] {
             config.points,
             config.points - plot.finite_count,
             if config.function.uses_tet() {
-                " (tet: 13 digits)"
+                format!(" (tet: {})", config.tet_digits())
             } else {
-                ""
+                String::new()
             }
         ),
         format!(
@@ -838,6 +838,7 @@ mod tests {
             lossy: false,
             auto_rotation: None,
             auto_scale_frames: false,
+            tet_prec: crate::sampling::PRECISION,
         };
         let value = |re, im| Some(Complex64::new(re, im));
         let values = [
@@ -859,6 +860,16 @@ mod tests {
             "3 / 3 finite samples, 0 skipped   |   calculated once"
         );
         assert!(status[3].ends_with("axes fitted independently"));
+        // A function that runs tet says with how many digits.
+        let mut solver = config.clone();
+        solver.function = crate::expression::Expression::parse("2^^x").unwrap();
+        for (digits, words) in [(13, "13 digits"), (5, "5 digits"), (1, "1 digit")] {
+            solver.tet_prec = digits;
+            assert_eq!(
+                status_lines(&solver, &single[0], 0)[2],
+                format!("3 / 3 finite samples, 0 skipped   |   calculated once (tet: {words})")
+            );
+        }
 
         config.animation = Some(Animation {
             from: Complex64::new(2.0, 1.0),
@@ -994,6 +1005,7 @@ mod tests {
             lossy: false,
             auto_rotation: None,
             auto_scale_frames: false,
+            tet_prec: crate::sampling::PRECISION,
         };
         assert_eq!((turn(&config, &animation), rotation(&config)), (0.0, 0.25));
         config.auto_rotation = Some(None);

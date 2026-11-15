@@ -26,6 +26,7 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         "--pitch DEGREES",
         "--auto-rotation",
         "--auto-scale-frames",
+        "--tet-prec N",
     ] {
         assert!(String::from_utf8_lossy(&help.stdout).contains(option));
     }
@@ -45,6 +46,9 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         vec!["x", "0", "1", "--mp4=line.mp4"],
         vec!["x", "0", "1", "--lossy"],
         vec!["x", "0", "1", "--auto-scale-frames"],
+        vec!["x", "0", "1", "--tet-prec"],
+        vec!["x", "0", "1", "--tet-prec", "0"],
+        vec!["x", "0", "1", "--tet-prec=16"],
     ] {
         let output = command()
             .env("PATH", directory.path())
@@ -145,6 +149,23 @@ fn coordinate_expressions_run_tet_before_the_calculation_starts() {
         std::fs::read_to_string(directory.path().join("tet.args")).unwrap(),
         "13 1.5 0 2 0\n"
     );
+
+    // `--tet-prec` gives the digits of those runs, wherever it stands.
+    for (args, digits) in [
+        (
+            &["--tet-prec", "7", "1/0", "1.5^^2", "0", "3", "0", "2"][..],
+            7,
+        ),
+        (&["1/0", "1.5^^2 + i", "3", "2", "--tet-prec=15"][..], 15),
+    ] {
+        let (code, stderr) = run(directory.path(), args);
+        assert_eq!(code, Some(1));
+        assert!(stderr.contains("sample 1 at x=1.8371173070873836+"));
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("tet.args")).unwrap(),
+            format!("{digits} 1.5 0 2 0\n")
+        );
+    }
 
     let (code, stderr) = run(directory.path(), &["x", "0", "0", "1.5^^3", "0"]);
     assert_eq!(code, Some(2));
@@ -255,4 +276,44 @@ fn a_video_is_tried_before_anything_is_calculated() {
     assert!(stderr.contains("Calculating 3 frames of 2 points (6 values) for f(x) = 1/0"));
     assert!(stderr.contains("no finite values"));
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn every_sample_asks_tet_for_the_digits_of_tet_prec() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let program = directory.path().join("tet");
+    std::fs::write(
+        &program,
+        "#!/bin/sh\necho \"$@\" >> \"$0.calls\"\necho 'unsupported height' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let calls = directory.path().join("tet.calls");
+    for (option, digits, words) in [
+        (&[][..], 13, "13 digits"),
+        (&["--tet-prec", "3"][..], 3, "3 digits"),
+        (&["--tet-prec=1"][..], 1, "1 digit"),
+    ] {
+        let _ = std::fs::remove_file(&calls);
+        let output = command()
+            .env("PATH", directory.path())
+            .args(["2^^x", "0", "1", "2"])
+            .args(option)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(&format!("  tet: {words}, at most ")));
+        assert!(stderr.contains("no finite values"));
+        let recorded = std::fs::read_to_string(&calls).unwrap();
+        let mut recorded: Vec<_> = recorded.lines().collect();
+        recorded.sort_unstable();
+        assert_eq!(
+            recorded,
+            [format!("{digits} 2 0 0 0"), format!("{digits} 2 0 1 0")]
+        );
+    }
 }

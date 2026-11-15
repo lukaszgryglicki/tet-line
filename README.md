@@ -27,6 +27,7 @@ tet-line base_re base_im plot_from_re plot_from_im plot_to_re plot_to_im [number
 tet-line ... --anim 'anim_from;anim_to;frames;seconds' [--auto-scale-frames]
 tet-line ... --anim 'anim_from;anim_to;frames;seconds' --mp4=FILE.mp4 [--lossy]
 tet-line ... --yaw degrees --pitch degrees --roll degrees --auto-rotation[=degrees]
+tet-line ... --tet-prec digits
 ```
 
 The line runs from the point `plot_from` to the point `plot_to`. Its two ends are
@@ -59,6 +60,9 @@ and a point count.
 
 # Save the initial view as a PNG and exit:
 ./target/release/tet-line --screenshot=line.png 1.333 -0.06 -2 0 2 0
+
+# Ask tet for 6 significant digits instead of 13:
+./target/release/tet-line --tet-prec 6 '2^^x' -1 3
 
 # An animation: the line -2+i .. 6-i turns into 2+i .. 6+i in 100 frames that take 5 seconds:
 ./target/release/tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5'
@@ -209,6 +213,15 @@ tet -q --slog 13 b_re b_im z_re z_im
 tet -q --sroot 13 z_re z_im h_re h_im
 ```
 
+The `13` of those three commands is the number of significant digits that `tet` is asked
+for. `--tet-prec N` (or `--tet-prec=N`) asks for `N` instead, an integer from 1 to 15, in
+every run of `tet`: for the samples and for constant coordinates such as `1.5^^2`,
+wherever the option stands among the arguments. More than 15 digits would be lost: the
+results are kept as `f64` numbers, which hold 15 significant digits. Fewer digits make
+`tet` faster for some bases (base 2 at 3 digits takes about a quarter of the time of 13)
+and change nothing for others. The terminal and the status lines of the window name the
+digits.
+
 `SILENT=1` suppresses solver progress without requiring a particular quiet flag;
 stdout must contain the real and imaginary results as two numbers. The program
 uses all available CPU cores (up to the point count), with one `tet` process per
@@ -228,7 +241,8 @@ and final results outside finite `f64` range leave **gaps**, not connections acr
 missing points. Nonfinite tetration operands are skipped without starting `tet`.
 An unavailable executable when needed, or a line with no finite results, is an error.
 The viewer inherits the installed solver's mathematical coverage and accuracy;
-13-digit working precision is not a certified error bound.
+the digits that it is asked for, 13 or those of `--tet-prec`, are not a certified error
+bound.
 
 ## Plot and controls
 

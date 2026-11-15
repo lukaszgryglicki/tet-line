@@ -1,4 +1,5 @@
 use crate::expression::{Expression, Operation};
+use crate::sampling::{MAX_PRECISION, PRECISION};
 use num_complex::Complex64;
 
 pub const USAGE: &str = "\
@@ -10,7 +11,7 @@ Usage: tet-line [--screenshot=FILE.png] <expression> \
        tet-line [--screenshot=FILE.png] --expr=EXPRESSION <plot_from> <plot_to> [number_of_points]
        tet-line [--screenshot=FILE.png] <base_re> <base_im> \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
-       every form also takes --anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'
+       every form also takes --tet-prec N and --anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'
        and --yaw DEGREES --pitch DEGREES --roll DEGREES --auto-rotation[=DEGREES];
        with --anim also --mp4=FILE.mp4, --lossy and --auto-scale-frames
 
@@ -44,6 +45,9 @@ Use --expr=EXPRESSION for numeric constants with a point count; six/seven
 numeric positionals retain the original fixed-base tetration format.
 
 Each ^^ or tet(b,h) runs PATH's tet at 13-digit precision; other math is local.
+--tet-prec N (or --tet-prec=N) asks tet for N digits instead, from 1 to 15, in every
+run of it, also for constant coordinates. The results are kept as f64 numbers, which
+hold 15 digits; fewer digits make tet faster for some bases.
 slog/ssrt run tet's --slog/--sroot modes; ssrt at non-integer heights can be slow.
 Uses all available CPUs. Expressions without ^^, tet, slog or ssrt do not need tet.
 Failed/nonfinite samples leave gaps. Exploration never recalculates values.
@@ -89,6 +93,7 @@ Examples: tet-line 'x^^x-x^x+x' 1 0 2 0
           tet-line 'sin(x)+exp(i*x)' -2 0 2 0
           tet-line 'sin(x)+exp(i*x)' -2-i 2+i 1024
           tet-line 1.333 -0.06 -2 0 2 0
+          tet-line --tet-prec 6 '2^^x' -1 3
           tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5'
           tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5' --mp4=slog.mp4 --yaw 20
           tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --mp4=turn.mp4 --auto-rotation
@@ -133,12 +138,15 @@ pub struct Config {
     pub auto_rotation: Option<Option<f32>>,
     /// `--auto-scale-frames`: the two result axes are fitted to every frame by itself.
     pub auto_scale_frames: bool,
+    /// `--tet-prec`: the significant digits that `tet` is asked for.
+    pub tet_prec: usize,
 }
 
 impl Config {
+    /// `tet` runs the program of that name: its first argument is the digits of `--tet-prec`.
     pub fn parse(
         args: impl IntoIterator<Item = String>,
-        tet: &mut impl FnMut(Operation, Complex64, Complex64) -> Result<Complex64, String>,
+        tet: &mut impl FnMut(usize, Operation, Complex64, Complex64) -> Result<Complex64, String>,
     ) -> Result<Option<Self>, String> {
         let mut positional = Vec::new();
         let mut screenshot = None;
@@ -149,6 +157,7 @@ impl Config {
         let mut lossy = false;
         let mut auto_rotation = None;
         let mut auto_scale_frames = false;
+        let mut tet_prec = None;
         let mut options = true;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -227,6 +236,28 @@ impl Config {
                     auto_scale_frames = true;
                     continue;
                 }
+                // `--tet-prec=DIGITS`, or `--tet-prec DIGITS` with the value in the next argument.
+                let digits = match arg.strip_prefix("--tet-prec=") {
+                    Some(value) => Some(value.to_owned()),
+                    None if arg == "--tet-prec" => Some(args.next().unwrap_or_default()),
+                    None => None,
+                };
+                if let Some(value) = digits {
+                    let digits = value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|digits| (1..=MAX_PRECISION).contains(digits))
+                        .ok_or_else(|| {
+                            format!(
+                                "--tet-prec requires the digits that tet is asked for, an \
+                                 integer from 1 to {MAX_PRECISION}, got '{value}'"
+                            )
+                        })?;
+                    if tet_prec.replace(digits).is_some() {
+                        return Err("--tet-prec may only be specified once".to_owned());
+                    }
+                    continue;
+                }
                 // Alone, or `--auto-rotation=DEGREES`: a next argument is not its value.
                 let speed = match arg.strip_prefix("--auto-rotation") {
                     Some("") => Some(None),
@@ -257,6 +288,9 @@ impl Config {
             }
             positional.push(arg);
         }
+        // Every option is read: the constants below run tet with the digits that it gave.
+        let tet_prec = tet_prec.unwrap_or(PRECISION);
+        let tet = &mut |operation, a, b| tet(tet_prec, operation, a, b);
 
         if expression.is_none()
             && ((3..=5).contains(&positional.len())
@@ -363,6 +397,7 @@ impl Config {
             lossy,
             auto_rotation,
             auto_scale_frames,
+            tet_prec,
         }))
     }
 
@@ -370,6 +405,12 @@ impl Config {
     #[cfg(test)]
     pub fn height(&self, index: usize) -> Complex64 {
         self.frame_height(0, index)
+    }
+
+    /// The precision of `tet` in words: "13 digits".
+    pub fn tet_digits(&self) -> String {
+        let plural = if self.tet_prec == 1 { "" } else { "s" };
+        format!("{} digit{plural}", self.tet_prec)
     }
 
     /// The number of lines: the frames of an animation, otherwise one.
@@ -519,7 +560,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Option<Config>, String> {
-        Config::parse(args.iter().map(|arg| arg.to_string()), &mut |_, _, _| {
+        Config::parse(args.iter().map(|arg| arg.to_string()), &mut |_, _, _, _| {
             Err("unexpected tet".to_owned())
         })
     }
@@ -563,6 +604,7 @@ mod tests {
                 lossy: false,
                 auto_rotation: None,
                 auto_scale_frames: false,
+                tet_prec: PRECISION,
             };
             assert_eq!(config.height(0), config.from);
             assert_eq!(config.height(1), Complex64::new(middle.0, middle.1));
@@ -895,7 +937,7 @@ mod tests {
         let mut calls = Vec::new();
         let config = Config::parse(
             ["x", "0", "1", "--anim", "2^^0.5;-e^^i;600;20"].map(str::to_owned),
-            &mut |operation, a, b| {
+            &mut |_, operation, a, b| {
                 calls.push((operation, a, b));
                 Ok(Complex64::new(1.5, 0.25))
             },
@@ -1122,11 +1164,105 @@ mod tests {
     }
 
     #[test]
+    fn tet_prec_is_the_digits_of_every_run_of_tet() {
+        let config = parse(&["x", "0", "1"]).unwrap().unwrap();
+        assert_eq!(
+            (config.tet_prec, config.tet_digits().as_str()),
+            (13, "13 digits")
+        );
+        for (option, digits, words) in [
+            (&["--tet-prec", "7"][..], 7, "7 digits"),
+            (&["--tet-prec=15"][..], 15, "15 digits"),
+            (&["--tet-prec=1"][..], 1, "1 digit"),
+        ] {
+            let mut args = vec!["x", "0"];
+            args.extend(option);
+            args.push("1");
+            let config = parse(&args).unwrap().unwrap();
+            assert_eq!(
+                (config.tet_prec, config.tet_digits().as_str()),
+                (digits, words)
+            );
+            assert_eq!(
+                (config.from.re, config.to.re, config.points),
+                (0.0, 1.0, 512)
+            );
+        }
+        let invalid = |value: &str| {
+            format!(
+                "--tet-prec requires the digits that tet is asked for, an integer from 1 to 15, \
+                 got '{value}'"
+            )
+        };
+        for value in ["0", "16", "-3", "2.5", "1e1", "many", ""] {
+            assert_eq!(
+                parse(&["x", "0", "1", &format!("--tet-prec={value}")]).unwrap_err(),
+                invalid(value)
+            );
+            assert_eq!(
+                parse(&["x", "0", "1", "--tet-prec", value]).unwrap_err(),
+                invalid(value)
+            );
+        }
+        // The next argument is the value, whatever it looks like, and one has to follow.
+        assert_eq!(
+            parse(&["x", "0", "1", "--tet-prec", "--lossy"]).unwrap_err(),
+            invalid("--lossy")
+        );
+        assert_eq!(
+            parse(&["x", "0", "1", "--tet-prec"]).unwrap_err(),
+            invalid("")
+        );
+        assert_eq!(
+            parse(&["x", "0", "1", "--tet-prec=3", "--tet-prec", "3"]).unwrap_err(),
+            "--tet-prec may only be specified once"
+        );
+        assert_eq!(
+            parse(&["x", "0", "1", "--tet-precision=3"]).unwrap_err(),
+            "unknown option: --tet-precision=3"
+        );
+
+        // The constants of the command line run tet with those digits, wherever the option
+        // stands among them, and with 13 without it.
+        let mut digits = Vec::new();
+        let config = Config::parse(
+            [
+                "x",
+                "1.5^^2",
+                "0",
+                "ate(2, 16)",
+                "0",
+                "--tet-prec",
+                "5",
+                "--anim=2^^0.5;4;3;1",
+            ]
+            .map(str::to_owned),
+            &mut |precision, _, _, _| {
+                digits.push(precision);
+                Ok(Complex64::new(1.5, 0.0))
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((digits, config.tet_prec), (vec![5, 5, 5], 5));
+        let mut digits = Vec::new();
+        Config::parse(
+            ["x", "1.5^^2", "0", "3", "0"].map(str::to_owned),
+            &mut |precision, _, _, _| {
+                digits.push(precision);
+                Ok(Complex64::new(1.5, 0.0))
+            },
+        )
+        .unwrap();
+        assert_eq!(digits, [13]);
+    }
+
+    #[test]
     fn coordinate_expressions_run_tet_and_keep_the_argument_forms() {
         let mut calls = Vec::new();
         let config = Config::parse(
             ["x", "1.5^^2", "0", "ate(2, 16) + 1", "0"].map(str::to_owned),
-            &mut |operation, a, b| {
+            &mut |_, operation, a, b| {
                 calls.push((operation, a, b));
                 Ok(Complex64::new(1.8371173070873836, 0.0))
             },
@@ -1151,7 +1287,7 @@ mod tests {
         calls.clear();
         let config = Config::parse(
             ["x", "1.5^^2 - i", "ate(2, 16)i + 1", "4"].map(str::to_owned),
-            &mut |operation, a, b| {
+            &mut |_, operation, a, b| {
                 calls.push((operation, a, b));
                 Ok(Complex64::new(1.8371173070873836, 0.0))
             },

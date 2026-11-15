@@ -13,9 +13,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 fn main() -> ExitCode {
-    let mut config = match Config::parse(std::env::args().skip(1), &mut |operation, a, b| {
-        sampling::tet(Path::new("tet"), operation, a, b)
-    }) {
+    let mut config = match Config::parse(
+        std::env::args().skip(1),
+        &mut |precision, operation, a, b| {
+            sampling::tet(Path::new("tet"), precision, operation, a, b)
+        },
+    ) {
         Ok(Some(config)) => config,
         Ok(None) => {
             print!("{USAGE}");
@@ -64,8 +67,8 @@ fn main() -> ExitCode {
     }
     if config.function.uses_tet() {
         eprintln!(
-            "  tet: {} digits, at most {workers} processes, one thread each",
-            sampling::PRECISION
+            "  tet: {}, at most {workers} processes, one thread each",
+            config.tet_digits()
         );
     }
     let started = Instant::now();

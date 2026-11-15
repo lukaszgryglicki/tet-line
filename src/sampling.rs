@@ -8,7 +8,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
+/// The significant digits that `tet` is asked for unless `--tet-prec` gives others.
 pub const PRECISION: usize = 13;
+
+/// The most digits that `--tet-prec` takes: the results are kept as `f64` numbers, which hold
+/// every number of 15 significant digits.
+pub const MAX_PRECISION: usize = f64::DIGITS as usize;
 
 /// The values of every frame, one frame after another, `points` to a frame.
 pub struct Samples {
@@ -34,7 +39,7 @@ pub fn calculate(
         |index| {
             let height = config.frame_height(index / config.points, index % config.points);
             let value = config.function.evaluate(height, &mut |operation, a, b| {
-                evaluate(program, operation, a, b)
+                evaluate(program, config.tet_prec, operation, a, b)
             })?;
             if value.is_finite() {
                 Ok(value)
@@ -132,11 +137,12 @@ fn calculate_with(
 
 pub fn tet(
     program: &Path,
+    precision: usize,
     operation: Operation,
     a: Complex64,
     b: Complex64,
 ) -> Result<Complex64, String> {
-    evaluate(program, operation, a, b).map_err(|err| match err {
+    evaluate(program, precision, operation, a, b).map_err(|err| match err {
         SampleError::Launch(err) => {
             format!("could not run tet: {err}; ensure the tet executable is on PATH")
         }
@@ -146,6 +152,7 @@ pub fn tet(
 
 fn evaluate(
     program: &Path,
+    precision: usize,
     operation: Operation,
     a: Complex64,
     b: Complex64,
@@ -163,7 +170,7 @@ fn evaluate(
     let output = Command::new(program)
         .args(mode)
         .args([
-            PRECISION.to_string(),
+            precision.to_string(),
             a.re.to_string(),
             a.im.to_string(),
             b.re.to_string(),
@@ -222,6 +229,7 @@ mod tests {
             lossy: false,
             auto_rotation: None,
             auto_scale_frames: false,
+            tet_prec: PRECISION,
         }
     }
 
@@ -512,5 +520,38 @@ printf '%s\n0\n' "$result"
             calls,
             "tet 1.25 -0.5 1.25 -0.5\nslog 2 1 1.25 -0.5\nsroot 1.25 -0.5 1.5 -1\n".repeat(2)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tet_is_asked_for_the_digits_of_tet_prec_in_every_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("tet");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\necho \"$@\" >> \"$0.calls\"\nprintf '1\\n0\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config = config(2);
+        config.from = Complex64::new(1.25, -0.5);
+        config.to = config.from;
+        config.function =
+            crate::expression::Expression::parse("x^^x + ate(2, x) - ssrt(x, 2)").unwrap();
+        config.tet_prec = 7;
+        let samples = calculate(&config, &program, 1, |_, _| {}).unwrap();
+        assert_eq!(samples.values, [Some(Complex64::new(1.0, 0.0)); 2]);
+        // A constant of the command line, with the digits that `Config::parse` hands on.
+        let (base, value) = (Complex64::new(2.0, 0.0), Complex64::new(3.0, 1.0));
+        assert_eq!(
+            tet(&program, 15, Operation::SuperLog, base, value),
+            Ok(Complex64::new(1.0, 0.0))
+        );
+        let calls = std::fs::read_to_string(directory.path().join("tet.calls")).unwrap();
+        let sample =
+            "7 1.25 -0.5 1.25 -0.5\n-q --slog 7 2 0 1.25 -0.5\n-q --sroot 7 1.25 -0.5 2 0\n";
+        assert_eq!(calls, sample.repeat(2) + "-q --slog 15 2 0 3 1\n");
     }
 }
