@@ -150,20 +150,18 @@ fn coordinate_expressions_run_tet_before_the_calculation_starts() {
         "13 1.5 0 2 0\n"
     );
 
-    // `--tet-prec` gives the digits of those runs, wherever it stands.
-    for (args, digits) in [
-        (
-            &["--tet-prec", "7", "1/0", "1.5^^2", "0", "3", "0", "2"][..],
-            7,
-        ),
-        (&["1/0", "1.5^^2 + i", "3", "2", "--tet-prec=15"][..], 15),
+    // `--tet-prec` is for the samples: a constant keeps the 13 digits, wherever it stands.
+    for args in [
+        &["--tet-prec", "7", "1/0", "1.5^^2", "0", "3", "0", "2"][..],
+        &["1/0", "1.5^^2 + i", "3", "2", "--tet-prec=15"][..],
     ] {
+        std::fs::remove_file(directory.path().join("tet.args")).unwrap();
         let (code, stderr) = run(directory.path(), args);
         assert_eq!(code, Some(1));
         assert!(stderr.contains("sample 1 at x=1.8371173070873836+"));
         assert_eq!(
             std::fs::read_to_string(directory.path().join("tet.args")).unwrap(),
-            format!("{digits} 1.5 0 2 0\n")
+            "13 1.5 0 2 0\n"
         );
     }
 

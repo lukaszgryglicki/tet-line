@@ -215,12 +215,12 @@ tet -q --sroot 13 z_re z_im h_re h_im
 
 The `13` of those three commands is the number of significant digits that `tet` is asked
 for. `--tet-prec N` (or `--tet-prec=N`) asks for `N` instead, an integer from 1 to 15, in
-every run of `tet`: for the samples and for constant coordinates such as `1.5^^2`,
-wherever the option stands among the arguments. More than 15 digits would be lost: the
-results are kept as `f64` numbers, which hold 15 significant digits. Fewer digits make
-`tet` faster for some bases (base 2 at 3 digits takes about a quarter of the time of 13)
-and change nothing for others. The terminal and the status lines of the window name the
-digits.
+the calculation of the samples, which can be hundreds of thousands of runs. Constant
+coordinates such as `1.5^^2` are calculated once and keep the 13 digits, so the line does
+not move with the option. More than 15 digits would be lost: the results are kept as
+`f64` numbers, which hold 15 significant digits. Fewer digits make `tet` faster for some
+bases (base 2 at 3 digits takes about a quarter of the time of 13) and change nothing for
+others. The terminal and the status lines of the window name the digits.
 
 `SILENT=1` suppresses solver progress without requiring a particular quiet flag;
 stdout must contain the real and imaginary results as two numbers. The program
