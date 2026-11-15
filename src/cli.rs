@@ -12,7 +12,7 @@ Usage: tet-line [--screenshot=FILE.png] <expression> \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
        every form also takes --anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'
        and --yaw DEGREES --pitch DEGREES --roll DEGREES --auto-rotation[=DEGREES];
-       with --anim also --mp4=FILE.mp4 and --lossy
+       with --anim also --mp4=FILE.mp4, --lossy and --auto-scale-frames
 
 Draw a complex function along the inclusive line from plot_from to plot_to.
 The two ends of the line are four real coordinates, or two complex points:
@@ -55,6 +55,9 @@ steps, the first and the last line included, shown in SECONDS and then again fro
 start. ANIM_FROM and ANIM_TO are points like plot_from and plot_to, FRAMES is at least 2.
 -2+i 6-i --anim '2+i;6+i;100;5' moves the line to 2+i 6+i in 100 frames, 20 a second.
 Every frame is calculated before the window opens: FRAMES times number_of_points values.
+The Re and Im axes are fitted once, to the values of all frames. --auto-scale-frames
+fits them to every frame by itself instead, in the window and in the videos: each frame
+is the most detailed view of its line, and the bounds of the axes change with it.
 
 With --anim, M starts an MP4 video of the window and N ends it and saves it as
 tet-line-<timestamp>.mp4. It has FRAMES / SECONDS pictures a second and each of them is
@@ -89,6 +92,7 @@ Examples: tet-line 'x^^x-x^x+x' 1 0 2 0
           tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5'
           tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5' --mp4=slog.mp4 --yaw 20
           tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --mp4=turn.mp4 --auto-rotation
+          tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --auto-scale-frames
 ";
 
 /// `--anim`: where the two ends of the line arrive, in how many lines and how fast.
@@ -127,6 +131,8 @@ pub struct Config {
     /// `--auto-rotation`: the view turns from the start, as after `R`; the inner value is the
     /// speed in degrees a second when one is given.
     pub auto_rotation: Option<Option<f32>>,
+    /// `--auto-scale-frames`: the two result axes are fitted to every frame by itself.
+    pub auto_scale_frames: bool,
 }
 
 impl Config {
@@ -142,6 +148,7 @@ impl Config {
         let mut mp4 = None;
         let mut lossy = false;
         let mut auto_rotation = None;
+        let mut auto_scale_frames = false;
         let mut options = true;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -214,6 +221,10 @@ impl Config {
                 }
                 if arg == "--lossy" {
                     lossy = true;
+                    continue;
+                }
+                if arg == "--auto-scale-frames" {
+                    auto_scale_frames = true;
                     continue;
                 }
                 // Alone, or `--auto-rotation=DEGREES`: a next argument is not its value.
@@ -333,6 +344,13 @@ impl Config {
         if mp4.is_some() && screenshot.is_some() {
             return Err("--mp4 and --screenshot cannot be used together".to_owned());
         }
+        if animation.is_none() && auto_scale_frames {
+            return Err(
+                "--auto-scale-frames requires --anim: it fits the axes to every frame of an \
+                 animation"
+                    .to_owned(),
+            );
+        }
         Ok(Some(Self {
             function,
             from: Complex64::new(numbers[2], numbers[3]),
@@ -344,6 +362,7 @@ impl Config {
             mp4,
             lossy,
             auto_rotation,
+            auto_scale_frames,
         }))
     }
 
@@ -543,6 +562,7 @@ mod tests {
                 mp4: None,
                 lossy: false,
                 auto_rotation: None,
+                auto_scale_frames: false,
             };
             assert_eq!(config.height(0), config.from);
             assert_eq!(config.height(1), Complex64::new(middle.0, middle.1));
@@ -1076,6 +1096,29 @@ mod tests {
             all.extend(args);
             assert_eq!(parse(&all).unwrap_err(), error);
         }
+    }
+
+    #[test]
+    fn auto_scale_frames_is_a_flag_of_an_animation() {
+        let anim = "--anim=2+i;6+i;100;2.5";
+        let config = parse(&["x", "0", "1", anim]).unwrap().unwrap();
+        assert!(!config.auto_scale_frames);
+        let config = parse(&["x", "--auto-scale-frames", "0", "1", anim])
+            .unwrap()
+            .unwrap();
+        assert!(config.auto_scale_frames);
+        assert_eq!(
+            (config.from.re, config.to.re, config.points),
+            (0.0, 1.0, 512)
+        );
+        assert_eq!(
+            parse(&["x", "0", "1", "--auto-scale-frames"]).unwrap_err(),
+            "--auto-scale-frames requires --anim: it fits the axes to every frame of an animation"
+        );
+        assert_eq!(
+            parse(&["x", "0", "1", anim, "--auto-scale-frames=1"]).unwrap_err(),
+            "unknown option: --auto-scale-frames=1"
+        );
     }
 
     #[test]

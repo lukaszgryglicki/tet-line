@@ -24,7 +24,7 @@ tet-line 'expression' plot_from plot_to [number_of_points]
 tet-line --expr=EXPRESSION plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
 tet-line --expr=EXPRESSION plot_from plot_to [number_of_points]
 tet-line base_re base_im plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
-tet-line ... --anim 'anim_from;anim_to;frames;seconds'
+tet-line ... --anim 'anim_from;anim_to;frames;seconds' [--auto-scale-frames]
 tet-line ... --anim 'anim_from;anim_to;frames;seconds' --mp4=FILE.mp4 [--lossy]
 tet-line ... --yaw degrees --pitch degrees --roll degrees --auto-rotation[=degrees]
 ```
@@ -69,6 +69,9 @@ and a point count.
 # A video in which the view turns as well: once around in its 16 seconds, or 10 degrees a second:
 ./target/release/tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --mp4=turn.mp4 --auto-rotation
 ./target/release/tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --mp4=slow.mp4 --auto-rotation=10
+
+# An animation whose Re and Im axes are fitted to every frame by itself, not once to all of them:
+./target/release/tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --auto-scale-frames
 ```
 
 ## Animation
@@ -92,6 +95,13 @@ nothing is calculated. The two result axes are fitted once, to the values of all
 so the curve moves in a box that stays; the ticks of the x axis and the status lines
 follow the frame that is shown. A frame without any finite value is an empty box; an
 animation without any finite value at all is an error.
+
+`--auto-scale-frames` fits the two result axes to every frame by itself instead: each
+frame is the most detailed view of its line, with the curve from side to side of the box
+in `Re(f(x))` and in `Im(f(x))`, and the ticks of those axes and their bounds on screen
+change from frame to frame. It holds wherever the animation is shown: in the window, in a
+recording of it and in a video of `--mp4`. A frame without any finite value keeps the axes
+of all frames. The terminal still reports the bounds of all values.
 
 `--screenshot` saves the first frame, the line of the arguments, and calculates only that
 one.

@@ -25,6 +25,7 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         "--yaw DEGREES",
         "--pitch DEGREES",
         "--auto-rotation",
+        "--auto-scale-frames",
     ] {
         assert!(String::from_utf8_lossy(&help.stdout).contains(option));
     }
@@ -43,6 +44,7 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         vec!["x", "0", "1", "--yaw"],
         vec!["x", "0", "1", "--mp4=line.mp4"],
         vec!["x", "0", "1", "--lossy"],
+        vec!["x", "0", "1", "--auto-scale-frames"],
     ] {
         let output = command()
             .env("PATH", directory.path())

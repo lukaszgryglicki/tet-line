@@ -101,6 +101,11 @@ fn main() -> ExitCode {
         plots[0].imag.min,
         plots[0].imag.max
     );
+    let plots = if config.auto_scale_frames {
+        Plot::auto_scaled(plots, &samples.values, config.points)
+    } else {
+        plots
+    };
     let failure = Arc::new(Mutex::new(None));
     let result = failure.clone();
     macroquad::Window::from_config(viewer::window_config(config.mp4.is_some()), async move {

@@ -95,6 +95,26 @@ impl Plot {
             .collect())
     }
 
+    /// The plots of `frames` again, each in a box of its own: the two result axes of a frame
+    /// are fitted to its finite values, as if it was the only one. A frame without a finite
+    /// value stays in the box of all of them.
+    pub fn auto_scaled(
+        frames: Vec<Self>,
+        values: &[Option<Complex64>],
+        points: usize,
+    ) -> Vec<Self> {
+        frames
+            .into_iter()
+            .zip(values.chunks(points.max(1)))
+            .map(|(shared, frame)| {
+                Self::frames(frame, points)
+                    .ok()
+                    .and_then(|mut own| own.pop())
+                    .unwrap_or(shared)
+            })
+            .collect()
+    }
+
     pub fn segments(&self) -> impl Iterator<Item = (usize, Vec3, Vec3)> + '_ {
         self.points
             .windows(2)
@@ -192,6 +212,53 @@ mod tests {
         assert_eq!(frames[2].points[1], Some(vec3(1.0, 0.0, 0.0)));
         assert_eq!(frames[1].segments().count(), 0);
         assert!(Plot::frames(&[None, None, None, None], 2).is_err());
+    }
+
+    #[test]
+    fn auto_scaled_frames_each_fill_a_box_of_their_own() {
+        let value = |re, im| Some(Complex64::new(re, im));
+        let values = [
+            value(0.0, 0.0),
+            value(1.0, 10.0),
+            None,
+            None,
+            value(4.0, -10.0),
+            value(2.0, 0.0),
+            None,
+            value(3.0, 5.0),
+        ];
+        let frames = Plot::auto_scaled(Plot::frames(&values, 2).unwrap(), &values, 2);
+        let bounds: Vec<_> = frames
+            .iter()
+            .map(|frame| {
+                (
+                    frame.real.min,
+                    frame.real.max,
+                    frame.imag.min,
+                    frame.imag.max,
+                )
+            })
+            .collect();
+        // The frame without a finite value keeps the box of all of them.
+        assert_eq!(
+            bounds,
+            [
+                (0.0, 1.0, 0.0, 10.0),
+                (0.0, 4.0, -10.0, 10.0),
+                (2.0, 4.0, -10.0, 0.0),
+                (3.0, 3.0, 5.0, 5.0),
+            ]
+        );
+        let counts: Vec<_> = frames.iter().map(|frame| frame.finite_count).collect();
+        assert_eq!(counts, [2, 0, 2, 1]);
+        // Each of the others reaches from end to end of both axes.
+        let (low, high) = (vec3(-1.0, -1.0, -1.0), vec3(1.0, 1.0, 1.0));
+        assert_eq!(frames[0].points, [Some(low), Some(high)]);
+        assert_eq!(frames[1].points, [None, None]);
+        assert_eq!(frames[2].points[0], Some(vec3(-1.0, 1.0, -1.0)));
+        assert_eq!(frames[2].points[1], Some(vec3(1.0, -1.0, 1.0)));
+        // A single value is in the middle of its two axes.
+        assert_eq!(frames[3].points, [None, Some(vec3(1.0, 0.0, 0.0))]);
     }
 
     #[test]

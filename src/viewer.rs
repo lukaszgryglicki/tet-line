@@ -162,7 +162,12 @@ fn status_lines(config: &Config, plot: &Plot, frame: usize) -> [String; 4] {
                 animation.frames,
                 number(animation.seconds)
             ),
-            ", over all frames",
+            // A frame without a finite value has no axes of its own.
+            if config.auto_scale_frames && plot.finite_count > 0 {
+                ", to this frame"
+            } else {
+                ", over all frames"
+            },
         ),
         None => (String::new(), ""),
     };
@@ -832,6 +837,7 @@ mod tests {
             mp4: None,
             lossy: false,
             auto_rotation: None,
+            auto_scale_frames: false,
         };
         let value = |re, im| Some(Complex64::new(re, im));
         let values = [
@@ -880,6 +886,35 @@ mod tests {
         };
         assert_eq!(ticks(0), ["-2+1i", "0.5i", "2", "4-0.5i", "6-1i"]);
         assert_eq!(ticks(1), ["2+1i", "3+1i", "4+1i", "5+1i", "6+1i"]);
+
+        // `--auto-scale-frames`: the bounds and the ticks of the two result axes are those of
+        // the frame, and a frame without a finite value keeps those of all frames.
+        config.auto_scale_frames = true;
+        let own = Plot::auto_scaled(frames, &values, 3);
+        let result_ticks = |frame: usize| -> Vec<String> {
+            let mut labels = axis_labels(&config, &own[frame], frame);
+            labels.truncate(labels.len() - 3);
+            labels.into_iter().skip(5).map(|label| label.text).collect()
+        };
+        assert_eq!(
+            status_lines(&config, &own[0], 0)[3],
+            "Re: [-2, 6]   Im: [-1, 1]   |   axes fitted independently, to this frame"
+        );
+        assert_eq!(
+            result_ticks(0),
+            ["-2", "0", "2", "4", "6", "-1", "-0.5", "0", "0.5", "1"]
+        );
+        assert_eq!(
+            status_lines(&config, &own[1], 1)[3],
+            "Re: [2, 6]   Im: [1, 1]   |   axes fitted independently, to this frame"
+        );
+        assert_eq!(result_ticks(1), ["2", "3", "4", "5", "6", "1"]);
+        let values = [values[0], values[1], values[2], None, None, None];
+        let own = Plot::auto_scaled(Plot::frames(&values, 3).unwrap(), &values, 3);
+        assert_eq!(
+            status_lines(&config, &own[1], 1)[3],
+            "Re: [-2, 6]   Im: [-1, 1]   |   axes fitted independently, over all frames"
+        );
     }
 
     #[test]
@@ -958,6 +993,7 @@ mod tests {
             mp4: None,
             lossy: false,
             auto_rotation: None,
+            auto_scale_frames: false,
         };
         assert_eq!((turn(&config, &animation), rotation(&config)), (0.0, 0.25));
         config.auto_rotation = Some(None);

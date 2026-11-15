@@ -221,6 +221,7 @@ mod tests {
             mp4: None,
             lossy: false,
             auto_rotation: None,
+            auto_scale_frames: false,
         }
     }
 
