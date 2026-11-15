@@ -16,6 +16,9 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         .unwrap();
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("Usage: tet-line"));
+    assert!(
+        String::from_utf8_lossy(&help.stdout).contains("--anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'")
+    );
     assert!(help.stderr.is_empty());
     for args in [
         vec![],
@@ -25,6 +28,9 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         vec!["sin(x,x)", "0", "0", "1", "0"],
         vec!["--expr=", "0", "0", "1", "0"],
         vec!["x", "0", "NaN", "1", "0"],
+        vec!["x", "0", "1", "--anim", "1;2;1;5"],
+        vec!["x", "0", "1", "--anim=1;2;3"],
+        vec!["x", "0", "1", "--anim"],
     ] {
         let output = command()
             .env("PATH", directory.path())
@@ -153,4 +159,41 @@ fn all_nonfinite_expression_results_fail_without_needing_tet_or_a_display() {
     assert!(stderr.contains("expression returned a nonfinite value"));
     assert!(stderr.contains("no finite values"));
     assert!(!stderr.contains("could not run tet"));
+}
+
+#[test]
+fn an_animation_calculates_every_frame_before_a_window_and_a_screenshot_only_the_first() {
+    let directory = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        let output = command()
+            .env("PATH", directory.path())
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    // No finite value in any frame: the error comes after all of them, without a window.
+    let (code, stderr) = run(&["1/0", "0", "1", "2", "--anim", "2;3;3;1"]);
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("Calculating 3 frames of 2 points (6 values) for f(x) = 1/0"));
+    assert!(stderr.contains("6/6 calculated, 6 skipped"));
+    assert!(stderr.contains("Skipped frame 1, sample 1 at x=0+0i"));
+    assert!(stderr.contains("no finite values"));
+
+    let (code, stderr) = run(&[
+        "--screenshot=never-written.png",
+        "1/0",
+        "0",
+        "1",
+        "2",
+        "--anim=2;3;3;1",
+    ]);
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("--screenshot saves the first line of the animation"));
+    assert!(stderr.contains("Calculating 2 points for f(x) = 1/0"));
+    assert!(stderr.contains("2/2 calculated, 2 skipped"));
+    assert!(stderr.contains("Skipped sample 1 at x=0+0i"));
 }

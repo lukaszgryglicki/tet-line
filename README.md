@@ -23,6 +23,7 @@ tet-line 'expression' plot_from plot_to [number_of_points]
 tet-line --expr=EXPRESSION plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
 tet-line --expr=EXPRESSION plot_from plot_to [number_of_points]
 tet-line base_re base_im plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
+tet-line ... --anim 'anim_from;anim_to;frames;seconds'
 ```
 
 The line runs from the point `plot_from` to the point `plot_to`. Its two ends are
@@ -55,7 +56,35 @@ and a point count.
 
 # Save the initial view as a PNG and exit:
 ./target/release/tet-line --screenshot=line.png 1.333 -0.06 -2 0 2 0
+
+# An animation: the line -2+i .. 6-i turns into 2+i .. 6+i in 100 frames that take 5 seconds:
+./target/release/tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5'
 ```
+
+## Animation
+
+`--anim 'anim_from;anim_to;frames;seconds'` (or `--anim=...`, anywhere among the arguments
+of every form above) moves the line while it is drawn: its start goes from `plot_from` to
+`anim_from` and its end from `plot_to` to `anim_to`, in `frames` equal steps. The first
+frame is the line of the arguments and the last one the line `anim_from .. anim_to`, so
+`frames` is at least 2. The frames are shown one after another in `seconds` (100 frames in
+5 seconds are 20 a second), and after the last one the animation starts again from the
+first. `Space` pauses and resumes it; rotation (`R`), the camera, `P` and everything else
+work while it plays, and `P` saves the frame that is shown.
+
+`anim_from` and `anim_to` are points like `plot_from` and `plot_to`: plain numbers or
+constant expressions with a finite complex value, so `--anim '2^^0.5;-e^^i;600;20'` runs
+`tet` twice for its two points. `seconds` is a positive number, for example `2.5`.
+
+Every frame is calculated before the window opens, `frames` times `number_of_points`
+values on all CPU cores, with the progress in the terminal; while the animation plays
+nothing is calculated. The two result axes are fitted once, to the values of all frames,
+so the curve moves in a box that stays; the ticks of the x axis and the status lines
+follow the frame that is shown. A frame without any finite value is an empty box; an
+animation without any finite value at all is an error.
+
+`--screenshot` saves the first frame, the line of the arguments, and calculates only that
+one.
 
 ## Expressions and calculation
 
@@ -132,7 +161,8 @@ A super-root at a non-integer height can take seconds to minutes per sample, so
 start with a small point count. An inverse that `tet` cannot find and verify, such
 as a value the base's tetration never takes, is a solver failure.
 
-Calculation happens once, with progress in the terminal, before the window opens.
+Calculation happens once, with progress in the terminal, before the window opens
+(for an [animation](#animation): of every frame).
 Changing the camera never invokes `tet` again. Solver failures, malformed output,
 and final results outside finite `f64` range leave **gaps**, not connections across
 missing points. Nonfinite tetration operands are skipped without starting `tet`.
@@ -151,6 +181,7 @@ the line, pink the end; small markers keep isolated valid samples visible.
 - Left mouse drag: orbit; right/middle drag: pan; wheel or `Z`/`X`: zoom.
 - `A`/`D`: yaw; `W`/`S`: pitch; `Q`/`E`: roll; `R`: toggle automatic rotation.
 - `0` or `Home`: reset the view; `P`: save the current view as `tet-line-<timestamp>.png`.
+- `Space`: pause or resume an [animation](#animation).
 - `F1`: toggle help; `F11`: fullscreen; `Esc`: quit.
 
 `--help` works without `tet` or a display.

@@ -35,7 +35,18 @@ pub struct Plot {
 }
 
 impl Plot {
+    /// The plot of one line.
+    #[cfg(test)]
     pub fn new(values: &[Option<Complex64>]) -> Result<Self, String> {
+        let mut frames = Self::frames(values, values.len())?;
+        frames
+            .pop()
+            .ok_or_else(|| "function returned no finite values for this line".to_owned())
+    }
+
+    /// One plot for every `points` values, all in the same box: the two result axes are fitted
+    /// to the finite values of all the frames, so that the curve moves and the box does not.
+    pub fn frames(values: &[Option<Complex64>], points: usize) -> Result<Vec<Self>, String> {
         let is_finite = |value: &&Complex64| value.re.is_finite() && value.im.is_finite();
         let mut finite = values.iter().flatten().filter(is_finite);
         let first = finite
@@ -49,35 +60,39 @@ impl Plot {
             min: first.im,
             max: first.im,
         };
-        let mut finite_count = 1;
         for value in finite {
             real.min = real.min.min(value.re);
             real.max = real.max.max(value.re);
             imag.min = imag.min.min(value.im);
             imag.max = imag.max.max(value.im);
-            finite_count += 1;
         }
-        let points = values
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                value
-                    .filter(|value| value.re.is_finite() && value.im.is_finite())
-                    .map(|value| {
-                        vec3(
-                            (2.0 * index as f64 / (values.len() - 1).max(1) as f64 - 1.0) as f32,
-                            real.normalize(value.re),
-                            imag.normalize(value.im),
-                        )
+        Ok(values
+            .chunks(points.max(1))
+            .map(|frame| {
+                let points: Vec<_> = frame
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        value
+                            .filter(|value| value.re.is_finite() && value.im.is_finite())
+                            .map(|value| {
+                                vec3(
+                                    (2.0 * index as f64 / (frame.len() - 1).max(1) as f64 - 1.0)
+                                        as f32,
+                                    real.normalize(value.re),
+                                    imag.normalize(value.im),
+                                )
+                            })
                     })
+                    .collect();
+                Self {
+                    finite_count: points.iter().flatten().count(),
+                    points,
+                    real,
+                    imag,
+                }
             })
-            .collect();
-        Ok(Self {
-            points,
-            real,
-            imag,
-            finite_count,
-        })
+            .collect())
     }
 
     pub fn segments(&self) -> impl Iterator<Item = (usize, Vec3, Vec3)> + '_ {
@@ -146,6 +161,37 @@ mod tests {
                 assert_eq!(plot.points[1].unwrap().y, 1.0);
             }
         }
+    }
+
+    #[test]
+    fn frames_share_one_box_and_keep_their_own_gaps() {
+        let value = |re, im| Some(Complex64::new(re, im));
+        let frames = Plot::frames(
+            &[
+                value(0.0, 0.0),
+                value(1.0, 10.0),
+                None,
+                None,
+                value(4.0, -10.0),
+                value(2.0, 0.0),
+            ],
+            2,
+        )
+        .unwrap();
+        assert_eq!(frames.len(), 3);
+        for frame in &frames {
+            assert_eq!((frame.real.min, frame.real.max), (0.0, 4.0));
+            assert_eq!((frame.imag.min, frame.imag.max), (-10.0, 10.0));
+        }
+        let counts: Vec<_> = frames.iter().map(|frame| frame.finite_count).collect();
+        assert_eq!(counts, [2, 0, 2]);
+        assert_eq!(frames[0].points[0], Some(vec3(-1.0, -1.0, 0.0)));
+        assert_eq!(frames[0].points[1], Some(vec3(1.0, -0.5, 1.0)));
+        assert_eq!(frames[1].points, [None, None]);
+        assert_eq!(frames[2].points[0], Some(vec3(-1.0, 1.0, -1.0)));
+        assert_eq!(frames[2].points[1], Some(vec3(1.0, 0.0, 0.0)));
+        assert_eq!(frames[1].segments().count(), 0);
+        assert!(Plot::frames(&[None, None, None, None], 2).is_err());
     }
 
     #[test]

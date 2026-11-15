@@ -1,4 +1,4 @@
-use crate::cli::Config;
+use crate::cli::{Animation, Config};
 use crate::plot::{Plot, Range};
 use macroquad::camera::Camera;
 use macroquad::prelude::*;
@@ -88,17 +88,36 @@ impl View {
     }
 }
 
-pub async fn run(config: Config, plot: Plot) {
-    let labels = axis_labels(&config, &plot);
-    let status = [
+/// The frame that is shown after `clock` seconds of play: every frame lasts as long as the
+/// others, and after the last one the animation starts again.
+fn frame_at(clock: f64, animation: &Animation) -> usize {
+    let position = (clock / animation.seconds).rem_euclid(1.0);
+    ((position * animation.frames as f64) as usize).min(animation.frames - 1)
+}
+
+fn status_lines(config: &Config, plot: &Plot, frame: usize) -> [String; 4] {
+    let (from, to) = config.line(frame);
+    let (place, fitted) = match &config.animation {
+        Some(animation) => (
+            format!(
+                "frame {} / {} in {} s   |   ",
+                frame + 1,
+                animation.frames,
+                number(animation.seconds)
+            ),
+            ", over all frames",
+        ),
+        None => (String::new(), ""),
+    };
+    [
         format!("tet-line   f(x) = {}", config.function.source()),
         format!(
             "x: {} -> {}   |   y: Re(f(x))   |   z: Im(f(x))",
-            complex(config.from),
-            complex(config.to)
+            complex(from),
+            complex(to)
         ),
         format!(
-            "{} / {} finite samples, {} skipped   |   calculated once{}",
+            "{place}{} / {} finite samples, {} skipped   |   calculated once{}",
             plot.finite_count,
             config.points,
             config.points - plot.finite_count,
@@ -109,24 +128,48 @@ pub async fn run(config: Config, plot: Plot) {
             }
         ),
         format!(
-            "Re: [{}, {}]   Im: [{}, {}]   |   axes fitted independently",
+            "Re: [{}, {}]   Im: [{}, {}]   |   axes fitted independently{fitted}",
             number(plot.real.min),
             number(plot.real.max),
             number(plot.imag.min),
             number(plot.imag.max)
         ),
-    ];
+    ]
+}
+
+pub async fn run(config: Config, plots: Vec<Plot>) {
+    let mut frame = 0;
+    let mut labels = axis_labels(&config, &plots[frame], frame);
+    let mut status = status_lines(&config, &plots[frame], frame);
+    // The animation plays from the start; Space pauses and resumes it.
+    let mut playing = config.animation.is_some();
+    let mut clock = 0.0_f64;
     let mut view = View::default();
     let mut previous_mouse = Vec2::from(mouse_position());
     let mut auto_rotate = false;
     let mut help = true;
     let mut fullscreen = false;
-    let mut frame = 0;
+    let mut rendered = 0;
 
     loop {
         if is_key_pressed(KeyCode::Escape) || is_quit_requested() {
             break;
         }
+        if let Some(animation) = &config.animation {
+            if is_key_pressed(KeyCode::Space) {
+                playing = !playing;
+            }
+            if playing {
+                clock = (clock + f64::from(get_frame_time())).rem_euclid(animation.seconds);
+            }
+            let shown = frame_at(clock, animation);
+            if shown != frame {
+                frame = shown;
+                labels = axis_labels(&config, &plots[frame], frame);
+                status = status_lines(&config, &plots[frame], frame);
+            }
+        }
+        let plot = &plots[frame];
         let dt = get_frame_time().min(0.1);
         let aspect = screen_width().max(1.0) / screen_height().max(1.0);
         let mouse = Vec2::from(mouse_position());
@@ -187,9 +230,10 @@ pub async fn run(config: Config, plot: Plot) {
         for label in &labels {
             draw_label(&camera, label);
         }
-        draw_hud(&status, help, auto_rotate);
-        frame += 1;
-        if frame >= 3 {
+        let play = config.animation.as_ref().map(|_| playing);
+        draw_hud(&status, help, auto_rotate, play);
+        rendered += 1;
+        if rendered >= 3 {
             if let Some(path) = &config.screenshot {
                 save_screenshot(path);
                 break;
@@ -246,12 +290,12 @@ struct Label {
     color: Color,
 }
 
-fn axis_labels(config: &Config, plot: &Plot) -> Vec<Label> {
+fn axis_labels(config: &Config, plot: &Plot, frame: usize) -> Vec<Label> {
     let mut labels = Vec::new();
     for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
         labels.push(Label {
             position: vec3(2.0 * t as f32 - 1.0, -1.1, 1.1),
-            text: complex(config.height_at(t)),
+            text: complex(config.frame_height_at(frame, t)),
             color: X_COLOR,
         });
     }
@@ -324,7 +368,8 @@ fn draw_label(camera: &Camera3D, label: &Label) {
     );
 }
 
-fn draw_hud(status: &[String], help: bool, auto_rotate: bool) {
+/// `playing` is the state of an animation, `None` without one.
+fn draw_hud(status: &[String], help: bool, auto_rotate: bool, playing: Option<bool>) {
     draw_rectangle(
         0.0,
         0.0,
@@ -335,11 +380,20 @@ fn draw_hud(status: &[String], help: bool, auto_rotate: bool) {
     for (index, line) in status.iter().enumerate() {
         draw_text(line, 18.0, 28.0 + index as f32 * 24.0, 20.0, WHITE);
     }
-    let hint = if auto_rotate {
-        "R: stop rotation | F1: help"
-    } else {
-        "F1: help | cyan: start, pink: end"
-    };
+    let hint = format!(
+        "{}{}",
+        match playing {
+            Some(true) => "Space: pause the animation | ",
+            Some(false) => "Space: play the animation | ",
+            None => "",
+        },
+        if auto_rotate {
+            "R: stop rotation | F1: help"
+        } else {
+            "F1: help | cyan: start, pink: end"
+        }
+    );
+    let hint = hint.as_str();
     if help {
         let top = screen_height() - 98.0;
         draw_rectangle(
@@ -402,6 +456,94 @@ fn complex(value: Complex64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frames_last_equally_long_and_the_animation_starts_again() {
+        let animation = Animation {
+            from: Complex64::new(2.0, 1.0),
+            to: Complex64::new(6.0, 1.0),
+            frames: 100,
+            seconds: 5.0,
+        };
+        for (clock, frame) in [
+            (0.0, 0),
+            (0.049, 0),
+            (0.051, 1),
+            (2.5, 50),
+            (4.99, 99),
+            (5.0, 0),
+            (7.5, 50),
+            (-0.01, 99),
+        ] {
+            assert_eq!(frame_at(clock, &animation), frame, "{clock}");
+        }
+        let seen: std::collections::BTreeSet<_> = (0..1000)
+            .map(|step| frame_at(f64::from(step) * 0.005, &animation))
+            .collect();
+        assert_eq!(seen.len(), 100);
+        for clock in [f64::MAX, -f64::MAX, 1e300, f64::MIN_POSITIVE] {
+            assert!(frame_at(clock, &animation) < 100);
+        }
+    }
+
+    #[test]
+    fn status_and_ticks_follow_the_frame() {
+        let mut config = Config {
+            function: crate::expression::Expression::parse("x").unwrap(),
+            from: Complex64::new(-2.0, 1.0),
+            to: Complex64::new(6.0, -1.0),
+            points: 3,
+            screenshot: None,
+            animation: None,
+        };
+        let value = |re, im| Some(Complex64::new(re, im));
+        let values = [
+            value(-2.0, 1.0),
+            value(2.0, 0.0),
+            value(6.0, -1.0),
+            value(2.0, 1.0),
+            None,
+            value(6.0, 1.0),
+        ];
+        let single = Plot::frames(&values[..3], 3).unwrap();
+        let status = status_lines(&config, &single[0], 0);
+        assert_eq!(
+            status[1],
+            "x: -2+1i -> 6-1i   |   y: Re(f(x))   |   z: Im(f(x))"
+        );
+        assert_eq!(
+            status[2],
+            "3 / 3 finite samples, 0 skipped   |   calculated once"
+        );
+        assert!(status[3].ends_with("axes fitted independently"));
+
+        config.animation = Some(Animation {
+            from: Complex64::new(2.0, 1.0),
+            to: Complex64::new(6.0, 1.0),
+            frames: 2,
+            seconds: 2.5,
+        });
+        let frames = Plot::frames(&values, 3).unwrap();
+        let status = status_lines(&config, &frames[1], 1);
+        assert_eq!(
+            status[1],
+            "x: 2+1i -> 6+1i   |   y: Re(f(x))   |   z: Im(f(x))"
+        );
+        assert_eq!(
+            status[2],
+            "frame 2 / 2 in 2.5 s   |   2 / 3 finite samples, 1 skipped   |   calculated once"
+        );
+        assert!(status[3].ends_with("axes fitted independently, over all frames"));
+        let ticks = |frame: usize| -> Vec<String> {
+            axis_labels(&config, &frames[frame], frame)
+                .into_iter()
+                .take(5)
+                .map(|label| label.text)
+                .collect()
+        };
+        assert_eq!(ticks(0), ["-2+1i", "0.5i", "2", "4-0.5i", "6-1i"]);
+        assert_eq!(ticks(1), ["2+1i", "3+1i", "4+1i", "5+1i", "6+1i"]);
+    }
 
     #[test]
     fn camera_stays_finite_and_orthogonal_when_rotated_zoomed_and_panned() {

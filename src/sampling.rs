@@ -10,6 +10,7 @@ use std::thread;
 
 pub const PRECISION: usize = 13;
 
+/// The values of every frame, one frame after another, `points` to a frame.
 pub struct Samples {
     pub values: Vec<Option<Complex64>>,
     pub failure_examples: Vec<String>,
@@ -31,11 +32,10 @@ pub fn calculate(
         config,
         workers,
         |index| {
-            let value = config
-                .function
-                .evaluate(config.height(index), &mut |operation, a, b| {
-                    evaluate(program, operation, a, b)
-                })?;
+            let height = config.frame_height(index / config.points, index % config.points);
+            let value = config.function.evaluate(height, &mut |operation, a, b| {
+                evaluate(program, operation, a, b)
+            })?;
             if value.is_finite() {
                 Ok(value)
             } else {
@@ -54,23 +54,27 @@ fn calculate_with(
     evaluate: impl Fn(usize) -> Result<Complex64, SampleError> + Sync,
     mut progress: impl FnMut(usize, usize),
 ) -> Result<Samples, String> {
+    let total = config
+        .frames()
+        .checked_mul(config.points)
+        .ok_or("the frames of the animation have too many samples")?;
     let mut values = Vec::new();
     values
-        .try_reserve_exact(config.points)
-        .map_err(|err| format!("cannot allocate {} samples: {err}", config.points))?;
-    values.resize(config.points, None);
+        .try_reserve_exact(total)
+        .map_err(|err| format!("cannot allocate {total} samples: {err}"))?;
+    values.resize(total, None);
     let next = AtomicUsize::new(0);
     let stopped = AtomicBool::new(false);
     let (sender, receiver) = mpsc::channel();
 
     thread::scope(|scope| {
-        for _ in 0..workers.max(1).min(config.points) {
+        for _ in 0..workers.max(1).min(total) {
             let sender = sender.clone();
             let (next, stopped, evaluate) = (&next, &stopped, &evaluate);
             scope.spawn(move || {
                 while !stopped.load(Ordering::Relaxed) {
                     let index = next.fetch_add(1, Ordering::Relaxed);
-                    if index >= config.points {
+                    if index >= total {
                         break;
                     }
                     let result = evaluate(index);
@@ -95,10 +99,16 @@ fn calculate_with(
                 Err(SampleError::Missing(reason)) => {
                     missing += 1;
                     if failure_examples.len() < 3 {
+                        let (frame, point) = (index / config.points, index % config.points);
+                        let place = if config.animation.is_some() {
+                            format!("frame {}, ", frame + 1)
+                        } else {
+                            String::new()
+                        };
                         failure_examples.push(format!(
-                            "sample {} at x={}: {reason}",
-                            index + 1,
-                            config.height(index)
+                            "{place}sample {} at x={}: {reason}",
+                            point + 1,
+                            config.frame_height(frame, point)
                         ));
                     }
                 }
@@ -206,6 +216,7 @@ mod tests {
             to: Complex64::new(2.0, -1.0),
             points,
             screenshot: None,
+            animation: None,
         }
     }
 
@@ -264,6 +275,47 @@ mod tests {
         assert_eq!(samples.failure_examples.len(), 1);
         assert_eq!(progress.len(), config.points);
         assert_eq!(progress.last(), Some(&(config.points, 1)));
+    }
+
+    #[test]
+    fn an_animation_evaluates_every_frame_once_on_its_own_line() {
+        let mut config = config(5);
+        config.animation = Some(crate::cli::Animation {
+            from: Complex64::new(2.0, 1.0),
+            to: Complex64::new(6.0, 1.0),
+            frames: 4,
+            seconds: 2.0,
+        });
+        let calls: Vec<_> = (0..20).map(|_| AtomicUsize::new(0)).collect();
+        let mut progress = Vec::new();
+        let samples = calculate_with(
+            &config,
+            3,
+            |index| {
+                calls[index].fetch_add(1, Ordering::SeqCst);
+                if index == 7 {
+                    Err(SampleError::Missing("unsupported height".to_owned()))
+                } else {
+                    Ok(config.frame_height(index / 5, index % 5))
+                }
+            },
+            |completed, missing| progress.push((completed, missing)),
+        )
+        .unwrap();
+        assert!(calls.iter().all(|count| count.load(Ordering::SeqCst) == 1));
+        assert_eq!(samples.values.len(), 20);
+        assert_eq!(progress.last(), Some(&(20, 1)));
+        // The first frame is the line of the arguments, the last one that of --anim.
+        assert_eq!(samples.values[0], Some(config.from));
+        assert_eq!(samples.values[4], Some(config.to));
+        assert_eq!(samples.values[15], Some(Complex64::new(2.0, 1.0)));
+        assert_eq!(samples.values[19], Some(Complex64::new(6.0, 1.0)));
+        assert_eq!(samples.values[7], None);
+        let [reason] = samples.failure_examples.as_slice() else {
+            panic!("{:?}", samples.failure_examples);
+        };
+        assert!(reason.starts_with("frame 2, sample 3 at x=1.33333333333333"));
+        assert!(reason.ends_with(": unsupported height"));
     }
 
     #[test]

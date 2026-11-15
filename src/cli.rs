@@ -10,6 +10,7 @@ Usage: tet-line [--screenshot=FILE.png] <expression> \
        tet-line [--screenshot=FILE.png] --expr=EXPRESSION <plot_from> <plot_to> [number_of_points]
        tet-line [--screenshot=FILE.png] <base_re> <base_im> \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
+       every form also takes --anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'
 
 Draw a complex function along the inclusive line from plot_from to plot_to.
 The two ends of the line are four real coordinates, or two complex points:
@@ -46,9 +47,18 @@ Uses all available CPUs. Expressions without ^^, tet, slog or ssrt do not need t
 Failed/nonfinite samples leave gaps. Exploration never recalculates values.
 x = position along the complex argument line, y = Re(result), z = Im(result).
 
+--anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS' (or --anim=...) animates the line: its start
+moves from plot_from to ANIM_FROM and its end from plot_to to ANIM_TO in FRAMES equal
+steps, the first and the last line included, shown in SECONDS and then again from the
+start. ANIM_FROM and ANIM_TO are points like plot_from and plot_to, FRAMES is at least 2.
+-2+i 6-i --anim '2+i;6+i;100;5' moves the line to 2+i 6+i in 100 frames, 20 a second.
+Every frame is calculated before the window opens: FRAMES times number_of_points values.
+
 Mouse: left-drag orbit, right/middle-drag pan, wheel zoom.
 Keys: A/D W/S Q/E rotate, Z/X zoom, R auto-rotate, 0 reset, P save PNG, F1 help, Esc quit.
---screenshot=FILE.png saves the initial view and exits.
+Space pauses and resumes an animation.
+--screenshot=FILE.png saves the initial view and exits; of an animation that is its
+first line, and only that one is calculated.
 -h, --help prints this help without opening a window.
 
 Examples: tet-line 'x^^x-x^x+x' 1 0 2 0
@@ -56,7 +66,19 @@ Examples: tet-line 'x^^x-x^x+x' 1 0 2 0
           tet-line 'sin(x)+exp(i*x)' -2 0 2 0
           tet-line 'sin(x)+exp(i*x)' -2-i 2+i 1024
           tet-line 1.333 -0.06 -2 0 2 0
+          tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5'
 ";
+
+/// `--anim`: where the two ends of the line arrive, in how many lines and how fast.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Animation {
+    pub from: Complex64,
+    pub to: Complex64,
+    /// The lines that are drawn, the first and the last one included.
+    pub frames: usize,
+    /// The time that all the frames take.
+    pub seconds: f64,
+}
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -65,6 +87,7 @@ pub struct Config {
     pub to: Complex64,
     pub points: usize,
     pub screenshot: Option<String>,
+    pub animation: Option<Animation>,
 }
 
 impl Config {
@@ -75,8 +98,10 @@ impl Config {
         let mut positional = Vec::new();
         let mut screenshot = None;
         let mut expression = None;
+        let mut animation: Option<String> = None;
         let mut options = true;
-        for arg in args {
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
             if options {
                 if matches!(arg.as_str(), "-h" | "--help") {
                     return Ok(None);
@@ -97,6 +122,18 @@ impl Config {
                 if let Some(source) = arg.strip_prefix("--expr=") {
                     if expression.replace(source.to_owned()).is_some() {
                         return Err("--expr may only be specified once".to_owned());
+                    }
+                    continue;
+                }
+                // `--anim=VALUE`, or `--anim VALUE` with the value in the next argument.
+                let value = match arg.strip_prefix("--anim=") {
+                    Some(value) => Some(value.to_owned()),
+                    None if arg == "--anim" => Some(args.next().ok_or(ANIMATION_FORMAT)?),
+                    None => None,
+                };
+                if let Some(value) = value {
+                    if animation.replace(value).is_some() {
+                        return Err("--anim may only be specified once".to_owned());
                     }
                     continue;
                 }
@@ -132,20 +169,7 @@ impl Config {
                 .zip(&positional)
                 .zip(["plot_from", "plot_to"])
             {
-                let value = match arg.parse::<f64>() {
-                    Ok(value) => Complex64::new(value, 0.0),
-                    Err(_) => constant_value(arg, tet).map_err(|reason| {
-                        format!(
-                            "{name} must be a finite complex number or a constant expression \
-                             without variables, got '{arg}': {reason}"
-                        )
-                    })?,
-                };
-                if !value.is_finite() {
-                    return Err(format!(
-                        "{name} must be a finite complex number, got '{arg}' = {value}"
-                    ));
-                }
+                let value = complex_point(arg, name, tet)?;
                 point.copy_from_slice(&[value.re, value.im]);
             }
         } else {
@@ -193,25 +217,122 @@ impl Config {
             }
             None => Expression::tetration(Complex64::new(numbers[0], numbers[1])),
         };
+        let animation = match animation {
+            Some(value) => Some(Animation::parse(&value, tet)?),
+            None => None,
+        };
         Ok(Some(Self {
             function,
             from: Complex64::new(numbers[2], numbers[3]),
             to: Complex64::new(numbers[4], numbers[5]),
             points,
             screenshot,
+            animation,
         }))
     }
 
-    pub fn height_at(&self, t: f64) -> Complex64 {
-        Complex64::new(
-            interpolate(self.from.re, self.to.re, t),
-            interpolate(self.from.im, self.to.im, t),
-        )
+    /// A sample of the line of the arguments.
+    #[cfg(test)]
+    pub fn height(&self, index: usize) -> Complex64 {
+        self.frame_height(0, index)
     }
 
-    pub fn height(&self, index: usize) -> Complex64 {
-        self.height_at(index as f64 / (self.points - 1) as f64)
+    /// The number of lines: the frames of an animation, otherwise one.
+    pub fn frames(&self) -> usize {
+        self.animation
+            .as_ref()
+            .map_or(1, |animation| animation.frames)
     }
+
+    /// The two ends of the line of a frame: the first frame is the line of the arguments, the
+    /// last one that of `--anim`.
+    pub fn line(&self, frame: usize) -> (Complex64, Complex64) {
+        match &self.animation {
+            Some(animation) if frame > 0 => {
+                let t = frame as f64 / (animation.frames - 1) as f64;
+                (
+                    between(self.from, animation.from, t),
+                    between(self.to, animation.to, t),
+                )
+            }
+            _ => (self.from, self.to),
+        }
+    }
+
+    pub fn frame_height_at(&self, frame: usize, t: f64) -> Complex64 {
+        let (from, to) = self.line(frame);
+        between(from, to, t)
+    }
+
+    pub fn frame_height(&self, frame: usize, index: usize) -> Complex64 {
+        self.frame_height_at(frame, index as f64 / (self.points - 1) as f64)
+    }
+}
+
+const ANIMATION_FORMAT: &str = "--anim requires 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'";
+
+impl Animation {
+    fn parse(
+        value: &str,
+        tet: &mut impl FnMut(Operation, Complex64, Complex64) -> Result<Complex64, String>,
+    ) -> Result<Self, String> {
+        let parts: Vec<&str> = value.split(';').map(str::trim).collect();
+        let &[from, to, frames, seconds] = parts.as_slice() else {
+            return Err(format!("{ANIMATION_FORMAT}, got '{value}'"));
+        };
+        let from = complex_point(from, "ANIM_FROM", tet)?;
+        let to = complex_point(to, "ANIM_TO", tet)?;
+        let frames = frames
+            .parse::<usize>()
+            .ok()
+            .filter(|&count| count >= 2)
+            .ok_or_else(|| {
+                format!("FRAMES of --anim must be an integer of at least 2, got '{frames}'")
+            })?;
+        let seconds = seconds
+            .parse::<f64>()
+            .ok()
+            .filter(|&time| time.is_finite() && time > 0.0)
+            .ok_or_else(|| {
+                format!("SECONDS of --anim must be a positive number, got '{seconds}'")
+            })?;
+        Ok(Self {
+            from,
+            to,
+            frames,
+            seconds,
+        })
+    }
+}
+
+/// A point of the complex plane given as one argument: a plain number, or a constant expression.
+fn complex_point(
+    arg: &str,
+    name: &str,
+    tet: &mut impl FnMut(Operation, Complex64, Complex64) -> Result<Complex64, String>,
+) -> Result<Complex64, String> {
+    let value = match arg.parse::<f64>() {
+        Ok(value) => Complex64::new(value, 0.0),
+        Err(_) => constant_value(arg, tet).map_err(|reason| {
+            format!(
+                "{name} must be a finite complex number or a constant expression \
+                 without variables, got '{arg}': {reason}"
+            )
+        })?,
+    };
+    if !value.is_finite() {
+        return Err(format!(
+            "{name} must be a finite complex number, got '{arg}' = {value}"
+        ));
+    }
+    Ok(value)
+}
+
+fn between(from: Complex64, to: Complex64, t: f64) -> Complex64 {
+    Complex64::new(
+        interpolate(from.re, to.re, t),
+        interpolate(from.im, to.im, t),
+    )
 }
 
 fn constant_value(
@@ -296,6 +417,7 @@ mod tests {
                 to: Complex64::new(to.0, to.1),
                 points: 3,
                 screenshot: None,
+                animation: None,
             };
             assert_eq!(config.height(0), config.from);
             assert_eq!(config.height(1), Complex64::new(middle.0, middle.1));
@@ -567,6 +689,145 @@ mod tests {
                 "number_of_points must be an integer of at least 2"
             );
         }
+    }
+
+    #[test]
+    fn anim_moves_both_ends_of_the_line_in_frames() {
+        let point = Complex64::new;
+        for args in [
+            &["slog(2,x)", "-2+i", "6-i", "--anim", "2+i;6+i;100;5"][..],
+            &["--anim=2+i;6+i;100;5", "slog(2,x)", "-2+i", "6-i"][..],
+            &[
+                "slog(2,x)",
+                "--anim",
+                " 2+i ; 6+i ; 100 ; 5.0 ",
+                "-2",
+                "1",
+                "6",
+                "-1",
+            ][..],
+        ] {
+            let config = parse(args).unwrap().unwrap();
+            assert_eq!(
+                config.animation,
+                Some(Animation {
+                    from: point(2.0, 1.0),
+                    to: point(6.0, 1.0),
+                    frames: 100,
+                    seconds: 5.0,
+                }),
+                "{args:?}"
+            );
+            assert_eq!((config.frames(), config.points), (100, 512));
+            // The first frame is the line of the arguments, the last one that of --anim.
+            assert_eq!(config.line(0), (point(-2.0, 1.0), point(6.0, -1.0)));
+            assert_eq!(config.line(99), (point(2.0, 1.0), point(6.0, 1.0)));
+            let (from, to) = config.line(33);
+            assert!((from - point(-2.0 + 4.0 / 3.0, 1.0)).norm() < 1e-15);
+            assert!((to - point(6.0, -1.0 + 2.0 / 3.0)).norm() < 1e-15);
+            assert_eq!(config.frame_height(0, 0), config.from);
+            assert_eq!(config.frame_height(0, 511), config.to);
+            assert_eq!(config.frame_height(99, 0), point(2.0, 1.0));
+            assert_eq!(config.frame_height(99, 511), point(6.0, 1.0));
+            assert_eq!(config.frame_height_at(99, 0.5), point(4.0, 1.0));
+        }
+        // The legacy form and a point count take it as well.
+        let config = parse(&["2", "0", "-2", "0", "2", "0", "--anim=0;4;3;1.5", "9"])
+            .unwrap()
+            .unwrap();
+        assert!(config.function.uses_tet());
+        assert_eq!((config.frames(), config.points), (3, 9));
+        assert_eq!(config.line(1), (point(-1.0, 0.0), point(3.0, 0.0)));
+        assert_eq!(config.animation.unwrap().seconds, 1.5);
+        // Without it there is one line, whatever frame is asked for.
+        let config = parse(&["x", "0", "1"]).unwrap().unwrap();
+        assert_eq!((config.animation.clone(), config.frames()), (None, 1));
+        assert_eq!(config.line(5), (config.from, config.to));
+    }
+
+    #[test]
+    fn anim_points_are_constant_expressions_that_run_tet() {
+        let mut calls = Vec::new();
+        let config = Config::parse(
+            ["x", "0", "1", "--anim", "2^^0.5;-e^^i;600;20"].map(str::to_owned),
+            &mut |operation, a, b| {
+                calls.push((operation, a, b));
+                Ok(Complex64::new(1.5, 0.25))
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            config.animation,
+            Some(Animation {
+                from: Complex64::new(1.5, 0.25),
+                to: Complex64::new(-1.5, -0.25),
+                frames: 600,
+                seconds: 20.0,
+            })
+        );
+        assert_eq!(
+            calls,
+            [
+                (
+                    Operation::Tetration,
+                    Complex64::new(2.0, 0.0),
+                    Complex64::new(0.5, 0.0),
+                ),
+                (
+                    Operation::Tetration,
+                    Complex64::new(std::f64::consts::E, 0.0),
+                    Complex64::new(0.0, 1.0),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn anim_rejects_wrong_fields_values_and_repetition() {
+        let format = "--anim requires 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'";
+        for value in ["", "2+i;6+i;100", "2+i;6+i;100;5;1", "2+i 6+i 100 5"] {
+            assert_eq!(
+                parse(&["x", "0", "1", "--anim", value]).unwrap_err(),
+                format!("{format}, got '{value}'")
+            );
+        }
+        for frames in ["1", "0", "-3", "2.5", "x", ""] {
+            assert_eq!(
+                parse(&["x", "0", "1", &format!("--anim=2+i;6+i;{frames};5")]).unwrap_err(),
+                format!("FRAMES of --anim must be an integer of at least 2, got '{frames}'")
+            );
+        }
+        for seconds in ["0", "-1", "inf", "nan", "x", ""] {
+            assert_eq!(
+                parse(&["x", "0", "1", &format!("--anim=2+i;6+i;2;{seconds}")]).unwrap_err(),
+                format!("SECONDS of --anim must be a positive number, got '{seconds}'")
+            );
+        }
+        for (value, name, reason) in [
+            ("x;1;2;5", "ANIM_FROM", "it contains a variable"),
+            ("1;(pi;2;5", "ANIM_TO", "expected `)` at byte 3"),
+            ("2^^3;1;2;5", "ANIM_FROM", "unexpected tet"),
+        ] {
+            let error = parse(&["x", "0", "1", "--anim", value]).unwrap_err();
+            assert!(
+                error.starts_with(&format!("{name} must be a finite complex number or"))
+                    && error.ends_with(reason),
+                "{error}"
+            );
+        }
+        assert_eq!(
+            parse(&["x", "0", "1", "--anim", "1;1/0;2;5"]).unwrap_err(),
+            "ANIM_TO must be a finite complex number, got '1/0' = NaN+NaNi"
+        );
+        assert_eq!(parse(&["x", "0", "1", "--anim"]).unwrap_err(), format);
+        assert_eq!(
+            parse(&["x", "0", "1", "--anim=1;2;3;4", "--anim", "1;2;3;4"]).unwrap_err(),
+            "--anim may only be specified once"
+        );
+        // The value is the next argument whatever it looks like; after `--` it is no option.
+        assert!(parse(&["x", "0", "1", "--anim", "--help"]).is_err());
+        assert!(parse(&["--", "x", "0", "1", "--anim", "1;2;3;4"]).is_err());
     }
 
     #[test]
