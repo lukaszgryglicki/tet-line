@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
-/// The significant digits that `tet` is asked for unless `--tet-prec` gives others.
+/// The significant digits that `tet` is asked for: always for the constants of the command
+/// line, and for the samples unless `--tet-prec` gives others.
 pub const PRECISION: usize = 13;
 
 /// The most digits that `--tet-prec` takes: the results are kept as `f64` numbers, which hold
@@ -137,12 +138,11 @@ fn calculate_with(
 
 pub fn tet(
     program: &Path,
-    precision: usize,
     operation: Operation,
     a: Complex64,
     b: Complex64,
 ) -> Result<Complex64, String> {
-    evaluate(program, precision, operation, a, b).map_err(|err| match err {
+    evaluate(program, PRECISION, operation, a, b).map_err(|err| match err {
         SampleError::Launch(err) => {
             format!("could not run tet: {err}; ensure the tet executable is on PATH")
         }
@@ -524,7 +524,7 @@ printf '%s\n0\n' "$result"
 
     #[cfg(unix)]
     #[test]
-    fn tet_is_asked_for_the_digits_of_tet_prec_in_every_mode() {
+    fn the_samples_ask_tet_for_the_digits_of_tet_prec_in_every_mode() {
         use std::os::unix::fs::PermissionsExt;
 
         let directory = tempfile::tempdir().unwrap();
@@ -543,15 +543,15 @@ printf '%s\n0\n' "$result"
         config.tet_prec = 7;
         let samples = calculate(&config, &program, 1, |_, _| {}).unwrap();
         assert_eq!(samples.values, [Some(Complex64::new(1.0, 0.0)); 2]);
-        // A constant of the command line, with the digits that `Config::parse` hands on.
+        // A constant of the command line keeps the 13 digits.
         let (base, value) = (Complex64::new(2.0, 0.0), Complex64::new(3.0, 1.0));
         assert_eq!(
-            tet(&program, 15, Operation::SuperLog, base, value),
+            tet(&program, Operation::SuperLog, base, value),
             Ok(Complex64::new(1.0, 0.0))
         );
         let calls = std::fs::read_to_string(directory.path().join("tet.calls")).unwrap();
         let sample =
             "7 1.25 -0.5 1.25 -0.5\n-q --slog 7 2 0 1.25 -0.5\n-q --sroot 7 1.25 -0.5 2 0\n";
-        assert_eq!(calls, sample.repeat(2) + "-q --slog 15 2 0 3 1\n");
+        assert_eq!(calls, sample.repeat(2) + "-q --slog 13 2 0 3 1\n");
     }
 }

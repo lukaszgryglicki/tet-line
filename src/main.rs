@@ -13,12 +13,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 fn main() -> ExitCode {
-    let mut config = match Config::parse(
-        std::env::args().skip(1),
-        &mut |precision, operation, a, b| {
-            sampling::tet(Path::new("tet"), precision, operation, a, b)
-        },
-    ) {
+    let mut config = match Config::parse(std::env::args().skip(1), &mut |operation, a, b| {
+        sampling::tet(Path::new("tet"), operation, a, b)
+    }) {
         Ok(Some(config)) => config,
         Ok(None) => {
             print!("{USAGE}");
