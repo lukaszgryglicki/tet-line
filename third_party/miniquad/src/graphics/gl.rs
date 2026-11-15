@@ -77,7 +77,8 @@ impl TextureFormat {
             TextureFormat::RGB8 => GL_RGB8,
             TextureFormat::RGBA8 => GL_RGBA8,
             TextureFormat::RGBA16F => GL_RGBA16F,
-            TextureFormat::Depth => GL_DEPTH_COMPONENT16,
+            // As deep as the depth buffer of a window (upstream: GL_DEPTH_COMPONENT16).
+            TextureFormat::Depth => GL_DEPTH_COMPONENT24,
             TextureFormat::Depth32 => GL_DEPTH_COMPONENT32,
             #[cfg(target_arch = "wasm32")]
             TextureFormat::Alpha => GL_ALPHA,
@@ -1096,7 +1097,7 @@ impl RenderingBackend for GlContext {
             if let Some(depth_img) = depth_img {
                 let texture = self.textures.get(depth_img);
                 if texture.params.sample_count > 1 {
-                    let raw = texture.raw.texture().unwrap();
+                    let raw = texture.raw.renderbuffer().unwrap();
                     glFramebufferRenderbuffer(
                         GL_FRAMEBUFFER,
                         GL_DEPTH_ATTACHMENT,

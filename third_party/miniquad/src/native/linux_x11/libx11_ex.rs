@@ -1,5 +1,35 @@
 // little helpers for LibX11
+#![allow(non_snake_case)]
+
 use super::*;
+
+/// A monitor as Xrandr 1.5 describes it.
+#[repr(C)]
+pub struct XRRMonitorInfo {
+    pub name: Atom,
+    pub primary: libc::c_int,
+    pub automatic: libc::c_int,
+    pub noutput: libc::c_int,
+    pub x: libc::c_int,
+    pub y: libc::c_int,
+    pub width: libc::c_int,
+    pub height: libc::c_int,
+    pub mwidth: libc::c_int,
+    pub mheight: libc::c_int,
+    pub outputs: *mut libc::c_ulong,
+}
+
+crate::declare_module!(
+    LibXrandr,
+    "libXrandr.so",
+    "libXrandr.so.2",
+    ...
+    ...
+    pub fn XRRGetMonitors(*mut Display, Window, libc::c_int, *mut libc::c_int) -> *mut XRRMonitorInfo,
+    pub fn XRRFreeMonitors(*mut XRRMonitorInfo),
+    ...
+    ...
+);
 
 impl LibX11 {
     pub unsafe fn update_system_dpi(&mut self, display: *mut Display) -> f32 {
@@ -202,13 +232,37 @@ impl LibX11 {
             | PropertyChangeMask;
         self.grab_error_handler();
 
+        let (mut width, mut height) = (conf.window_width, conf.window_height);
+        if conf.platform.linux_x11_hidden && conf.fullscreen {
+            // No window manager makes a window that is never shown full screen: it gets the
+            // size of the primary monitor, or of the screen where Xrandr does not tell.
+            let private = display as _XPrivDisplay;
+            let screen = (*private).screens.offset((*private).default_screen as isize);
+            width = (*screen).width;
+            height = (*screen).height;
+            if let Ok(xrandr) = LibXrandr::try_load() {
+                let mut count = 0;
+                let monitors = (xrandr.XRRGetMonitors)(display, root, 1, &mut count);
+                if !monitors.is_null() {
+                    let all = std::slice::from_raw_parts(monitors, count.max(0) as usize);
+                    let primary = all.iter().find(|monitor| monitor.primary != 0);
+                    if let Some(monitor) = primary.or(all.first()) {
+                        width = monitor.width;
+                        height = monitor.height;
+                    }
+                    (xrandr.XRRFreeMonitors)(monitors);
+                }
+                // Xlib calls the extension when the display is closed: it stays loaded.
+                std::mem::forget(xrandr);
+            }
+        }
         let window = (self.XCreateWindow)(
             display,
             root,
             0 as libc::c_int,
             0 as libc::c_int,
-            conf.window_width as _,
-            conf.window_height as _,
+            width as _,
+            height as _,
             0 as libc::c_int as libc::c_uint,
             depth,
             InputOutput as libc::c_uint,

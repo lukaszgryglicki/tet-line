@@ -217,6 +217,10 @@ mod tests {
             points,
             screenshot: None,
             animation: None,
+            angles: crate::cli::Angles::default(),
+            mp4: None,
+            lossy: false,
+            auto_rotation: None,
         }
     }
 

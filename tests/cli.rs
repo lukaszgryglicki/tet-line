@@ -19,6 +19,15 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
     assert!(
         String::from_utf8_lossy(&help.stdout).contains("--anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'")
     );
+    for option in [
+        "--mp4=FILE.mp4",
+        "--lossy",
+        "--yaw DEGREES",
+        "--pitch DEGREES",
+        "--auto-rotation",
+    ] {
+        assert!(String::from_utf8_lossy(&help.stdout).contains(option));
+    }
     assert!(help.stderr.is_empty());
     for args in [
         vec![],
@@ -31,6 +40,9 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         vec!["x", "0", "1", "--anim", "1;2;1;5"],
         vec!["x", "0", "1", "--anim=1;2;3"],
         vec!["x", "0", "1", "--anim"],
+        vec!["x", "0", "1", "--yaw"],
+        vec!["x", "0", "1", "--mp4=line.mp4"],
+        vec!["x", "0", "1", "--lossy"],
     ] {
         let output = command()
             .env("PATH", directory.path())
@@ -196,4 +208,49 @@ fn an_animation_calculates_every_frame_before_a_window_and_a_screenshot_only_the
     assert!(stderr.contains("Calculating 2 points for f(x) = 1/0"));
     assert!(stderr.contains("2/2 calculated, 2 skipped"));
     assert!(stderr.contains("Skipped sample 1 at x=0+0i"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_video_is_tried_before_anything_is_calculated() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let video = format!("--mp4={}", directory.path().join("line.mp4").display());
+    let run = |args: &[&str]| {
+        let output = command()
+            .env("PATH", directory.path())
+            .args(args)
+            .arg(&video)
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stderr) = run(&["x", "0", "1", "2", "--anim", "2;3;3;1"]);
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("a video needs the ffmpeg executable on PATH"));
+    assert!(!stderr.contains("Calculating"));
+
+    let program = directory.path().join("ffmpeg");
+    let write = |body: &str| {
+        std::fs::write(&program, format!("#!/bin/sh\nPATH=/bin:/usr/bin\n{body}\n")).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    write("cat > /dev/null\necho 'Unknown encoder' >&2\nexit 1");
+    let (code, stderr) = run(&["x", "0", "1", "2", "--lossy", "--anim", "2;3;3;1"]);
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("Unknown encoder"));
+    assert!(stderr.contains("error: ffmpeg failed (exit status: 1)"));
+    assert!(!stderr.contains("Calculating"));
+
+    // One that works lets the calculation start; the trial leaves no file.
+    write("for out; do :; done\ncat > \"${out#file:}\"");
+    let (code, stderr) = run(&["1/0", "0", "1", "2", "--anim", "2;3;3;1"]);
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("Calculating 3 frames of 2 points (6 values) for f(x) = 1/0"));
+    assert!(stderr.contains("no finite values"));
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
 }

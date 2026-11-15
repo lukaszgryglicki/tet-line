@@ -11,6 +11,8 @@ Usage: tet-line [--screenshot=FILE.png] <expression> \
        tet-line [--screenshot=FILE.png] <base_re> <base_im> \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
        every form also takes --anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'
+       and --yaw DEGREES --pitch DEGREES --roll DEGREES --auto-rotation[=DEGREES];
+       with --anim also --mp4=FILE.mp4 and --lossy
 
 Draw a complex function along the inclusive line from plot_from to plot_to.
 The two ends of the line are four real coordinates, or two complex points:
@@ -54,9 +56,27 @@ start. ANIM_FROM and ANIM_TO are points like plot_from and plot_to, FRAMES is at
 -2+i 6-i --anim '2+i;6+i;100;5' moves the line to 2+i 6+i in 100 frames, 20 a second.
 Every frame is calculated before the window opens: FRAMES times number_of_points values.
 
+With --anim, M starts an MP4 video of the window and N ends it and saves it as
+tet-line-<timestamp>.mp4. It has FRAMES / SECONDS pictures a second and each of them is
+one frame later: the animation, the rotation and the keys keep the time of the video.
+--mp4=FILE.mp4 saves the animation as a video instead, every frame once and seen from the
+first view, which turns with --auto-rotation. No window is shown; the pictures have the
+size of the screen.
+ffmpeg from PATH writes the videos. Every frame is a PNG picture that comes back exactly:
+ffmpeg -i FILE.mp4 frame-%04d.png. --lossy makes H.265 videos, about ten times smaller.
+
+--yaw DEGREES, --pitch DEGREES and --roll DEGREES (or --yaw=DEGREES ...) turn the first
+view, the one that 0 returns to; without them it has yaw 37.24, pitch 22.92 and roll 0.
+Yaw 0 and pitch 0 look along the z axis, x to the right and y up. Yaw moves the camera
+to the right around the plot and pitch lifts it, up to 87.09 as W does; roll turns the
+picture counter-clockwise.
+--auto-rotation starts with the rotation of R on. --auto-rotation=DEGREES gives its speed
+in degrees of yaw a second, a negative one the other way; without it a window turns as
+always, 14.32 degrees a second, and a video of --mp4 turns once in its whole length.
+
 Mouse: left-drag orbit, right/middle-drag pan, wheel zoom.
 Keys: A/D W/S Q/E rotate, Z/X zoom, R auto-rotate, 0 reset, P save PNG, F1 help, Esc quit.
-Space pauses and resumes an animation.
+Space pauses and resumes an animation; M starts an MP4 video of it and N saves it.
 --screenshot=FILE.png saves the initial view and exits; of an animation that is its
 first line, and only that one is calculated.
 -h, --help prints this help without opening a window.
@@ -67,6 +87,8 @@ Examples: tet-line 'x^^x-x^x+x' 1 0 2 0
           tet-line 'sin(x)+exp(i*x)' -2-i 2+i 1024
           tet-line 1.333 -0.06 -2 0 2 0
           tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5'
+          tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5' --mp4=slog.mp4 --yaw 20
+          tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --mp4=turn.mp4 --auto-rotation
 ";
 
 /// `--anim`: where the two ends of the line arrive, in how many lines and how fast.
@@ -80,6 +102,15 @@ pub struct Animation {
     pub seconds: f64,
 }
 
+/// `--yaw`, `--pitch` and `--roll`: the angles of the first view in degrees. The viewer has its
+/// own angle where one is missing.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Angles {
+    pub yaw: Option<f32>,
+    pub pitch: Option<f32>,
+    pub roll: Option<f32>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub function: Expression,
@@ -88,6 +119,14 @@ pub struct Config {
     pub points: usize,
     pub screenshot: Option<String>,
     pub animation: Option<Animation>,
+    pub angles: Angles,
+    /// `--mp4`: the animation is saved as this video and no window is shown.
+    pub mp4: Option<String>,
+    /// `--lossy`: videos are H.265 instead of lossless pictures.
+    pub lossy: bool,
+    /// `--auto-rotation`: the view turns from the start, as after `R`; the inner value is the
+    /// speed in degrees a second when one is given.
+    pub auto_rotation: Option<Option<f32>>,
 }
 
 impl Config {
@@ -99,6 +138,10 @@ impl Config {
         let mut screenshot = None;
         let mut expression = None;
         let mut animation: Option<String> = None;
+        let mut angles = Angles::default();
+        let mut mp4 = None;
+        let mut lossy = false;
+        let mut auto_rotation = None;
         let mut options = true;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -134,6 +177,66 @@ impl Config {
                 if let Some(value) = value {
                     if animation.replace(value).is_some() {
                         return Err("--anim may only be specified once".to_owned());
+                    }
+                    continue;
+                }
+                // `--yaw=DEGREES`, or `--yaw DEGREES`: the next argument, also a negative one.
+                let angle = [
+                    ("--yaw", &mut angles.yaw),
+                    ("--pitch", &mut angles.pitch),
+                    ("--roll", &mut angles.roll),
+                ]
+                .into_iter()
+                .find_map(|(name, angle)| match arg.strip_prefix(name) {
+                    Some("") => Some((name, angle, None)),
+                    Some(rest) => Some((name, angle, Some(rest.strip_prefix('=')?.to_owned()))),
+                    None => None,
+                });
+                if let Some((name, angle, value)) = angle {
+                    let degrees = value
+                        .or_else(|| args.next())
+                        .and_then(|value| value.parse::<f32>().ok())
+                        .filter(|degrees| degrees.is_finite())
+                        .ok_or_else(|| format!("{name} requires an angle in degrees"))?;
+                    if angle.replace(degrees).is_some() {
+                        return Err(format!("{name} may only be specified once"));
+                    }
+                    continue;
+                }
+                if let Some(path) = arg.strip_prefix("--mp4=") {
+                    if path.is_empty() {
+                        return Err("--mp4 requires a file name".to_owned());
+                    }
+                    if mp4.replace(path.to_owned()).is_some() {
+                        return Err("--mp4 may only be specified once".to_owned());
+                    }
+                    continue;
+                }
+                if arg == "--lossy" {
+                    lossy = true;
+                    continue;
+                }
+                // Alone, or `--auto-rotation=DEGREES`: a next argument is not its value.
+                let speed = match arg.strip_prefix("--auto-rotation") {
+                    Some("") => Some(None),
+                    Some(rest) => rest.strip_prefix('=').map(Some),
+                    None => None,
+                };
+                if let Some(speed) = speed {
+                    let speed = match speed {
+                        Some(value) => Some(
+                            value
+                                .parse::<f32>()
+                                .ok()
+                                .filter(|speed| speed.is_finite())
+                                .ok_or_else(|| {
+                                    format!("--auto-rotation takes degrees a second, got '{value}'")
+                                })?,
+                        ),
+                        None => None,
+                    };
+                    if auto_rotation.replace(speed).is_some() {
+                        return Err("--auto-rotation may only be specified once".to_owned());
                     }
                     continue;
                 }
@@ -221,6 +324,15 @@ impl Config {
             Some(value) => Some(Animation::parse(&value, tet)?),
             None => None,
         };
+        if animation.is_none() && (mp4.is_some() || lossy) {
+            return Err(format!(
+                "{} requires --anim: a video is made of an animation",
+                if mp4.is_some() { "--mp4" } else { "--lossy" }
+            ));
+        }
+        if mp4.is_some() && screenshot.is_some() {
+            return Err("--mp4 and --screenshot cannot be used together".to_owned());
+        }
         Ok(Some(Self {
             function,
             from: Complex64::new(numbers[2], numbers[3]),
@@ -228,6 +340,10 @@ impl Config {
             points,
             screenshot,
             animation,
+            angles,
+            mp4,
+            lossy,
+            auto_rotation,
         }))
     }
 
@@ -272,6 +388,11 @@ impl Config {
 const ANIMATION_FORMAT: &str = "--anim requires 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'";
 
 impl Animation {
+    /// The frames in a second, as the quotient that `ffmpeg` reads.
+    pub fn rate(&self) -> String {
+        format!("{}/{}", self.frames, self.seconds)
+    }
+
     fn parse(
         value: &str,
         tet: &mut impl FnMut(Operation, Complex64, Complex64) -> Result<Complex64, String>,
@@ -418,6 +539,10 @@ mod tests {
                 points: 3,
                 screenshot: None,
                 animation: None,
+                angles: Angles::default(),
+                mp4: None,
+                lossy: false,
+                auto_rotation: None,
             };
             assert_eq!(config.height(0), config.from);
             assert_eq!(config.height(1), Complex64::new(middle.0, middle.1));
@@ -828,6 +953,129 @@ mod tests {
         // The value is the next argument whatever it looks like; after `--` it is no option.
         assert!(parse(&["x", "0", "1", "--anim", "--help"]).is_err());
         assert!(parse(&["--", "x", "0", "1", "--anim", "1;2;3;4"]).is_err());
+    }
+
+    #[test]
+    fn view_angles_are_degrees_in_either_form_anywhere_among_the_arguments() {
+        let config = parse(&["x", "0", "1"]).unwrap().unwrap();
+        assert_eq!(config.angles, Angles::default());
+        assert_eq!(config.auto_rotation, None);
+        // The speed is part of the option: an argument after it is a coordinate.
+        for (option, rotation) in [
+            ("--auto-rotation", Some(None)),
+            ("--auto-rotation=30", Some(Some(30.0))),
+            ("--auto-rotation=-12.5", Some(Some(-12.5))),
+        ] {
+            let config = parse(&["x", option, "0", "1"]).unwrap().unwrap();
+            assert_eq!(config.auto_rotation, rotation, "{option}");
+            assert_eq!(
+                (config.from.re, config.to.re, config.points),
+                (0.0, 1.0, 512)
+            );
+        }
+        for value in ["", "fast", "nan", "inf", "1e40"] {
+            assert_eq!(
+                parse(&["x", "0", "1", &format!("--auto-rotation={value}")]).unwrap_err(),
+                format!("--auto-rotation takes degrees a second, got '{value}'")
+            );
+        }
+        assert_eq!(
+            parse(&["x", "0", "1", "--auto-rotation", "--auto-rotation=3"]).unwrap_err(),
+            "--auto-rotation may only be specified once"
+        );
+        assert_eq!(
+            parse(&["x", "0", "1", "--auto-rotations"]).unwrap_err(),
+            "unknown option: --auto-rotations"
+        );
+        let config = parse(&[
+            "--yaw",
+            "-30",
+            "x",
+            "--pitch=45.5",
+            "-2-i",
+            "2+i",
+            "--roll",
+            "1e1",
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            config.angles,
+            Angles {
+                yaw: Some(-30.0),
+                pitch: Some(45.5),
+                roll: Some(10.0),
+            }
+        );
+        assert_eq!(
+            (config.from, config.to, config.points),
+            (Complex64::new(-2.0, -1.0), Complex64::new(2.0, 1.0), 512)
+        );
+        for (args, name) in [
+            (&["--yaw"][..], "--yaw"),
+            (&["--yaw="][..], "--yaw"),
+            (&["--yaw", "left"][..], "--yaw"),
+            (&["--pitch=nan"][..], "--pitch"),
+            (&["--pitch", "inf"][..], "--pitch"),
+            (&["--roll=1e40"][..], "--roll"),
+            (&["--roll", "--yaw=3"][..], "--roll"),
+        ] {
+            let mut all = vec!["x", "0", "1"];
+            all.extend(args);
+            assert_eq!(
+                parse(&all).unwrap_err(),
+                format!("{name} requires an angle in degrees")
+            );
+        }
+        assert_eq!(
+            parse(&["x", "0", "1", "--roll=1", "--roll", "2"]).unwrap_err(),
+            "--roll may only be specified once"
+        );
+        assert_eq!(
+            parse(&["x", "0", "1", "--yawn=3"]).unwrap_err(),
+            "unknown option: --yawn=3"
+        );
+        // After `--` it is no option.
+        assert!(parse(&["--", "x", "0", "1", "--yaw", "3"]).is_err());
+    }
+
+    #[test]
+    fn a_video_is_made_of_an_animation() {
+        let anim = "--anim=2+i;6+i;100;2.5";
+        let config = parse(&["x", "0", "1", anim]).unwrap().unwrap();
+        assert_eq!((config.mp4, config.lossy), (None, false));
+        assert_eq!(config.animation.unwrap().rate(), "100/2.5");
+        let config = parse(&["--lossy", "x", "0", "--mp4=a b.mp4", "1", anim])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (config.mp4.as_deref(), config.lossy),
+            (Some("a b.mp4"), true)
+        );
+        for (args, error) in [
+            (
+                &["--mp4=a.mp4"][..],
+                "--mp4 requires --anim: a video is made of an animation",
+            ),
+            (
+                &["--lossy"][..],
+                "--lossy requires --anim: a video is made of an animation",
+            ),
+            (&[anim, "--mp4="][..], "--mp4 requires a file name"),
+            (
+                &[anim, "--mp4=a.mp4", "--mp4=b.mp4"][..],
+                "--mp4 may only be specified once",
+            ),
+            (
+                &[anim, "--mp4=a.mp4", "--screenshot=a.png"][..],
+                "--mp4 and --screenshot cannot be used together",
+            ),
+            (&[anim, "--mp4", "a.mp4"][..], "unknown option: --mp4"),
+        ] {
+            let mut all = vec!["x", "0", "1"];
+            all.extend(args);
+            assert_eq!(parse(&all).unwrap_err(), error);
+        }
     }
 
     #[test]

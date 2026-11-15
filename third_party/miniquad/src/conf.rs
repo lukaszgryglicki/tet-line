@@ -169,6 +169,10 @@ pub struct Platform {
     // for most purposes they are the same so we just use class name for simplicity
     // https://unix.stackexchange.com/questions/494169/
     pub linux_wm_class: &'static str,
+
+    /// If `true`, the X11 window is created but never shown, for drawing into render targets
+    /// without a visible window. With `fullscreen` it gets the size of the primary monitor.
+    pub linux_x11_hidden: bool,
 }
 
 impl Default for Platform {
@@ -183,6 +187,7 @@ impl Default for Platform {
             framebuffer_alpha: false,
             wayland_decorations: WaylandDecorations::default(),
             linux_wm_class: "miniquad-application",
+            linux_x11_hidden: false,
         }
     }
 }

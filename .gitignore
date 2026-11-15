@@ -2,3 +2,4 @@
 **/*.rs.bk
 *.secret
 out
+*.mp4

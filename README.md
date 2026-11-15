@@ -10,7 +10,8 @@ approximation.
 
 Install Rust and, for expressions that need it, put the `tet` executable from
 [claude-tetration](https://github.com/lukaszgryglicki/claude-tetration) on PATH.
-A working desktop OpenGL display is required for the viewer.
+A working desktop OpenGL display is required for the viewer, and the `ffmpeg`
+executable on PATH for [videos](#video).
 
 ```sh
 cargo build --release --locked
@@ -24,6 +25,8 @@ tet-line --expr=EXPRESSION plot_from_re plot_from_im plot_to_re plot_to_im [numb
 tet-line --expr=EXPRESSION plot_from plot_to [number_of_points]
 tet-line base_re base_im plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
 tet-line ... --anim 'anim_from;anim_to;frames;seconds'
+tet-line ... --anim 'anim_from;anim_to;frames;seconds' --mp4=FILE.mp4 [--lossy]
+tet-line ... --yaw degrees --pitch degrees --roll degrees --auto-rotation[=degrees]
 ```
 
 The line runs from the point `plot_from` to the point `plot_to`. Its two ends are
@@ -59,6 +62,13 @@ and a point count.
 
 # An animation: the line -2+i .. 6-i turns into 2+i .. 6+i in 100 frames that take 5 seconds:
 ./target/release/tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5'
+
+# The same animation as a video, made without a window, seen from yaw 20 and pitch 30 degrees:
+./target/release/tet-line 'slog(2,x)' -2+i 6-i --anim '2+i;6+i;100;5' --mp4=slog.mp4 --yaw 20 --pitch 30
+
+# A video in which the view turns as well: once around in its 16 seconds, or 10 degrees a second:
+./target/release/tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --mp4=turn.mp4 --auto-rotation
+./target/release/tet-line 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --mp4=slow.mp4 --auto-rotation=10
 ```
 
 ## Animation
@@ -85,6 +95,46 @@ animation without any finite value at all is an error.
 
 `--screenshot` saves the first frame, the line of the arguments, and calculates only that
 one.
+
+### Video
+
+An animation can be saved as an MP4 video, written by the `ffmpeg` executable on PATH. The
+video has the frame rate of the animation, `frames / seconds` pictures a second.
+
+- **A recording of the window.** `M` starts it; `N` ends it and saves it as
+  `tet-line-<timestamp>.mp4` in the current directory. The pictures are those of the window,
+  as large as it is and with its text (`F1` hides the help). While a recording runs, time is
+  the time of the video: every picture is one frame later than the picture before it, also
+  on a computer that is too slow to show them at that pace. So the video has the frames of
+  the animation one after another, each once, and automatic rotation (`R`) and the rotation
+  and zoom keys move evenly in it. Everything else works as usual: `Space` pauses the
+  animation, the mouse and the keys move the view, and the video shows what the window
+  showed. A red dot on the window, which is not in the video, marks a recording. `Esc` and
+  closing the window save it as well. A window that changes its size (`F11` included) ends
+  and saves the recording, because a video has one size.
+- **The whole animation, without a window.** `--mp4=FILE.mp4` draws every frame once, from
+  the first to the last, and exits. No window is shown. The pictures have the size of the
+  screen, as if the window was full screen, the view of `--yaw`, `--pitch` and `--roll`
+  ([Plot and controls](#plot-and-controls)) and the status lines, but not the help.
+  With `--auto-rotation` the view turns from frame to frame: once around in the whole
+  video, so that its end meets its start, or with `--auto-rotation=degrees` by that many
+  degrees of yaw in a second of the video.
+  `ffmpeg` is tried before the calculation starts, so a long calculation is not lost to a
+  video that cannot be written. A display is still needed, because the pictures are drawn
+  by OpenGL; with several monitors the pictures have the size of the primary one.
+
+Without `--lossy` the video is lossless: every frame is a PNG picture of its own, with the
+highest compression of that format, and comes back exactly as it was drawn:
+
+```sh
+ffmpeg -i FILE.mp4 frame-%04d.png            # every frame as a PNG file
+ffmpeg -i FILE.mp4 -c copy frame-%04d.png    # the same, the stored pictures as they are
+```
+
+Players built on FFmpeg, such as mpv and VLC, show such a video; browsers do not.
+`--lossy`, for recordings and for `--mp4`, makes an H.265 video instead (libx265, CRF 20,
+4:2:0, `hvc1`), which plays nearly everywhere and is about ten times smaller: 100 frames of
+2880 x 1800 pixels took 7.1 MB lossless and 0.7 MB with `--lossy`.
 
 ## Expressions and calculation
 
@@ -181,8 +231,23 @@ the line, pink the end; small markers keep isolated valid samples visible.
 - Left mouse drag: orbit; right/middle drag: pan; wheel or `Z`/`X`: zoom.
 - `A`/`D`: yaw; `W`/`S`: pitch; `Q`/`E`: roll; `R`: toggle automatic rotation.
 - `0` or `Home`: reset the view; `P`: save the current view as `tet-line-<timestamp>.png`.
-- `Space`: pause or resume an [animation](#animation).
+- `Space`: pause or resume an [animation](#animation); `M`: start a [video](#video) of
+  it; `N`: end and save the video.
 - `F1`: toggle help; `F11`: fullscreen; `Esc`: quit.
+
+`--yaw degrees`, `--pitch degrees` and `--roll degrees` (or `--yaw=degrees`, ...; negative
+values work directly) turn the first view, the one that `0` and `Home` return to. Without
+them it is as before: yaw 37.24, pitch 22.92 and roll 0 degrees. Yaw 0 with pitch 0 looks
+along the z axis, with x to the right and y up. A larger yaw moves the camera to the right
+around the plot (at 90 it looks along the x axis), a larger pitch lifts it (towards a view
+from above; it stays within 87.09 degrees, where `W` and `S` stop too), and a larger roll
+turns the picture counter-clockwise.
+
+`--auto-rotation` starts with the automatic rotation of `R` on, and
+`--auto-rotation=degrees` also sets its speed, in degrees of yaw a second; a negative
+speed turns the other way. Without a speed the window turns as it always did after `R`,
+14.32 degrees a second, and a [video](#video) made by `--mp4` turns once in its whole
+length. `--screenshot` still saves the first view.
 
 `--help` works without `tet` or a display.
 
@@ -200,6 +265,11 @@ Macroquad 0.4.14 with its vendored Miniquad 0.4.8
 [FreeBSD X11/OpenGL patch](https://github.com/not-fl3/miniquad/pull/600).
 The copy in `third_party/miniquad` retains its MIT and Apache licenses, so no sibling
 checkout is needed to build. Linux and FreeBSD use the same graphics stack.
+For `--mp4` the copy has three more changes: `Platform::linux_x11_hidden` (an X11 window
+that is never shown and, with `fullscreen`, has the size of the primary monitor, which
+Xrandr tells), the depth buffer of a multisampled render target attached as the
+renderbuffer that it is (as in upstream `master`), and that buffer 24 bits deep like the
+one of a window instead of 16.
 
 `Cargo.lock` belongs in version control; `target/`, Rust backups, and all `*.secret`
 files (including nested ones) are ignored.

@@ -2,12 +2,14 @@ mod cli;
 mod expression;
 mod plot;
 mod sampling;
+mod video;
 mod viewer;
 
 use cli::{Config, USAGE};
 use plot::Plot;
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 fn main() -> ExitCode {
@@ -28,6 +30,18 @@ fn main() -> ExitCode {
         eprintln!(
             "--screenshot saves the first line of the animation; the others are not calculated."
         );
+    }
+    if let (Some(file), Some(animation)) = (&config.mp4, &config.animation) {
+        // Before the calculation, which can be long.
+        if let Err(err) = video::check(
+            Path::new(video::FFMPEG),
+            Path::new(file),
+            &animation.rate(),
+            config.lossy,
+        ) {
+            eprintln!("error: {err}");
+            return ExitCode::FAILURE;
+        }
     }
     let total = config.frames().saturating_mul(config.points);
     let workers = std::thread::available_parallelism()
@@ -87,6 +101,15 @@ fn main() -> ExitCode {
         plots[0].imag.min,
         plots[0].imag.max
     );
-    macroquad::Window::from_config(viewer::window_config(), viewer::run(config, plots));
+    let failure = Arc::new(Mutex::new(None));
+    let result = failure.clone();
+    macroquad::Window::from_config(viewer::window_config(config.mp4.is_some()), async move {
+        *result.lock().unwrap() = viewer::run(config, plots).await.err();
+    });
+    let failure = failure.lock().unwrap().take();
+    if let Some(err) = failure {
+        eprintln!("error: {err}");
+        return ExitCode::FAILURE;
+    }
     ExitCode::SUCCESS
 }
