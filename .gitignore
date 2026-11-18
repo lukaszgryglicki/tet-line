@@ -3,5 +3,6 @@
 *.secret
 out
 *.mp4
+*.png
 /tet-line
 /tet-line.static
