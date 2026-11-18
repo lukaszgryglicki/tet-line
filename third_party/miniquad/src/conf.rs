@@ -173,6 +173,11 @@ pub struct Platform {
     /// If `true`, the X11 window is created but never shown, for drawing into render targets
     /// without a visible window. With `fullscreen` it gets the size of the primary monitor.
     pub linux_x11_hidden: bool,
+
+    /// If `true`, the window is the whole screen of the text console although an X11 or
+    /// Wayland display is set: SDL2, which is loaded then, shows it with its KMSDRM driver or
+    /// the one that `SDL_VIDEODRIVER` names. Without a display the window always is that.
+    pub linux_console: bool,
 }
 
 impl Default for Platform {
@@ -188,6 +193,7 @@ impl Default for Platform {
             wayland_decorations: WaylandDecorations::default(),
             linux_wm_class: "miniquad-application",
             linux_x11_hidden: false,
+            linux_console: false,
         }
     }
 }

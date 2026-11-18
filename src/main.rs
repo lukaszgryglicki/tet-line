@@ -108,7 +108,8 @@ fn main() -> ExitCode {
     };
     let failure = Arc::new(Mutex::new(None));
     let result = failure.clone();
-    macroquad::Window::from_config(viewer::window_config(config.mp4.is_some()), async move {
+    let window = viewer::window_config(config.mp4.is_some(), config.console);
+    macroquad::Window::from_config(window, async move {
         *result.lock().unwrap() = viewer::run(config, plots).await.err();
     });
     let failure = failure.lock().unwrap().take();

@@ -12,7 +12,7 @@ Usage: tet-line [--screenshot=FILE.png] <expression> \
        tet-line [--screenshot=FILE.png] <base_re> <base_im> \
 <plot_from_re> <plot_from_im> <plot_to_re> <plot_to_im> [number_of_points]
        every form also takes --tet-prec N and --anim 'ANIM_FROM;ANIM_TO;FRAMES;SECONDS'
-       and --yaw DEGREES --pitch DEGREES --roll DEGREES --auto-rotation[=DEGREES];
+       and --yaw DEGREES --pitch DEGREES --roll DEGREES --auto-rotation[=DEGREES] --console;
        with --anim also --mp4=FILE.mp4, --lossy and --auto-scale-frames
 
 Draw a complex function along the inclusive line from plot_from to plot_to.
@@ -81,6 +81,13 @@ picture counter-clockwise.
 in degrees of yaw a second, a negative one the other way; without it a window turns as
 always, 14.32 degrees a second, and a video of --mp4 turns once in its whole length.
 
+Without an X11 display (DISPLAY) the plot is the whole screen of the text console that the
+program is started on, on Linux and FreeBSD: SDL2 shows it with its KMSDRM driver, and the
+keys are those of the console. --console does that also when DISPLAY is set. Esc or Ctrl+C
+ends the program, and on FreeBSD a switch to another console does. Where the keys come
+from the terminal (always on FreeBSD) there is no mouse, and a key counts as held while it
+repeats.
+
 Mouse: left-drag orbit, right/middle-drag pan, wheel zoom.
 Keys: A/D W/S Q/E rotate, Z/X zoom, R auto-rotate, 0 reset, P save PNG, F1 help, Esc quit.
 Space pauses and resumes an animation; M starts an MP4 video of it and N saves it.
@@ -141,6 +148,8 @@ pub struct Config {
     /// `--tet-prec`: the significant digits that `tet` is asked for in the calculation of the
     /// samples. The constants of the command line keep 13.
     pub tet_prec: usize,
+    /// `--console`: the window is the screen of the text console although a display is set.
+    pub console: bool,
 }
 
 impl Config {
@@ -158,6 +167,7 @@ impl Config {
         let mut auto_rotation = None;
         let mut auto_scale_frames = false;
         let mut tet_prec = None;
+        let mut console = false;
         let mut options = true;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -234,6 +244,10 @@ impl Config {
                 }
                 if arg == "--auto-scale-frames" {
                     auto_scale_frames = true;
+                    continue;
+                }
+                if arg == "--console" {
+                    console = true;
                     continue;
                 }
                 // `--tet-prec=DIGITS`, or `--tet-prec DIGITS` with the value in the next argument.
@@ -395,6 +409,7 @@ impl Config {
             auto_rotation,
             auto_scale_frames,
             tet_prec: tet_prec.unwrap_or(PRECISION),
+            console,
         }))
     }
 
@@ -602,6 +617,7 @@ mod tests {
                 auto_rotation: None,
                 auto_scale_frames: false,
                 tet_prec: PRECISION,
+                console: false,
             };
             assert_eq!(config.height(0), config.from);
             assert_eq!(config.height(1), Complex64::new(middle.0, middle.1));
@@ -1150,6 +1166,15 @@ mod tests {
             (config.from.re, config.to.re, config.points),
             (0.0, 1.0, 512)
         );
+        // `--console` is a flag of every form, wherever it stands.
+        assert!(!config.console);
+        for args in [
+            &["--console", "x", "0", "1"][..],
+            &["2", "0", "0", "0", "1", "0", "--console"],
+            &["x", "0", "--console", "1", anim, "--mp4=a.mp4"],
+        ] {
+            assert!(parse(args).unwrap().unwrap().console, "{args:?}");
+        }
         assert_eq!(
             parse(&["x", "0", "1", "--auto-scale-frames"]).unwrap_err(),
             "--auto-scale-frames requires --anim: it fits the axes to every frame of an animation"

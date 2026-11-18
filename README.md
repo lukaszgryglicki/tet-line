@@ -11,12 +11,28 @@ approximation.
 Install Rust and, for expressions that need it, put the `tet` executable from
 [claude-tetration](https://github.com/lukaszgryglicki/claude-tetration) on PATH.
 A working desktop OpenGL display is required for the viewer, and the `ffmpeg`
-executable on PATH for [videos](#video).
+executable on PATH for [videos](#video). On Linux and FreeBSD the viewer also runs
+without a desktop, on the [text console](#text-console). FreeBSD, Linux and macOS are
+supported.
 
 ```sh
 cargo build --release --locked
 ./target/release/tet-line 'x^^x-x^x+x' 1 0 2 0
 ```
+
+The Makefile builds the same executable and installs it:
+
+```sh
+make release    # target/release/tet-line
+make static     # the release, checked to need no library but the C library of the system
+make install    # copies it to ./tet-line, ./tet-line.static and /data/scripts/tet-line
+make install INSTALL_DIR="$HOME/bin"
+make clean      # removes target/, not those copies
+```
+
+The release is as static as this program can be, so `make static` builds no second
+executable: all Rust code is linked into it, and X11, OpenGL and SDL2 are libraries of
+the system that it loads when it runs, which a fully static executable cannot do.
 
 ```text
 tet-line 'expression' plot_from_re plot_from_im plot_to_re plot_to_im [number_of_points]
@@ -28,6 +44,7 @@ tet-line ... --anim 'anim_from;anim_to;frames;seconds' [--auto-scale-frames]
 tet-line ... --anim 'anim_from;anim_to;frames;seconds' --mp4=FILE.mp4 [--lossy]
 tet-line ... --yaw degrees --pitch degrees --roll degrees --auto-rotation[=degrees]
 tet-line ... --tet-prec digits
+tet-line ... --console
 ```
 
 The line runs from the point `plot_from` to the point `plot_to`. Its two ends are
@@ -136,6 +153,8 @@ video has the frame rate of the animation, `frames / seconds` pictures a second.
   `ffmpeg` is tried before the calculation starts, so a long calculation is not lost to a
   video that cannot be written. A display is still needed, because the pictures are drawn
   by OpenGL; with several monitors the pictures have the size of the primary one.
+  On macOS the window cannot be hidden: it is shown, full screen, until the video is saved.
+  Without any display, see the [text console](#text-console).
 
 Without `--lossy` the video is lossless: every frame is a PNG picture of its own, with the
 highest compression of that format, and comes back exactly as it was drawn:
@@ -275,12 +294,91 @@ length. `--screenshot` still saves the first view.
 
 `--help` works without `tet` or a display.
 
+## Text console
+
+On Linux and FreeBSD the viewer needs no X11: the plot is then the whole screen of the
+text console that the program is started on. That happens by itself when neither
+`DISPLAY` nor `WAYLAND_DISPLAY` is set, and with `--console` also when one is. With a
+display and without the option nothing differs from before: the window is an X11 window.
+macOS has no text console, and `--console` does nothing there.
+
+```sh
+# After a login on a text console (Alt+F2), where no DISPLAY is set:
+tet-line 'sin(x)+exp(i*x)' -2-i 2+i
+```
+
+It needs, only when it is used:
+
+- the SDL2 library with its KMSDRM driver (`pkg install sdl2` on FreeBSD,
+  `apt install libsdl2-2.0-0` on Debian and Ubuntu). The program loads it when it runs:
+  nothing more is needed to build, and nothing changes for X11;
+- a graphics driver with kernel mode setting and the right to open its device,
+  `/dev/dri/card*`: on FreeBSD the group `video`, on Linux the group `video` or the access
+  that a login on the console gives;
+- a screen that no other program draws on: the console must be the one that is shown.
+
+**Keys.** On Linux, SDL2 reads the keyboard and the mouse from `/dev/input/event*` when the
+user may read them (the group `input`, or root), and everything works as in a window.
+Otherwise, and always on FreeBSD, the keys are those of the terminal of the console and
+there is no mouse; so the pan of the right mouse button is missing there, and all else has
+keys. A terminal tells which characters arrive, not when a key is released: a tap is a
+short press, and a key counts as held while it repeats. So a held `A` turns the plot one
+step, and steadily once the keyboard repeats. `Esc` takes 50 ms, in which it could still be
+the start of an arrow key. `F11` does nothing, the screen is always full.
+
+**Ending.** `Esc` ends the program, and so does `Ctrl+C`, which is the signal of the
+terminal here as everywhere: it reaches `ffmpeg` and `tet` as well. So it does not save a
+recording, as `Esc` does, and it ends the making of a `--mp4` video, which `Esc` does not.
+It also works while the program is busy and does not look at its keys: a program that was
+busy when it was asked to end, by `Ctrl+C`, a signal or a switch of the console, and still
+is three seconds later, is ended without its help, with the exit status 1, after its
+console is given back.
+
+**Other consoles.** On Linux the program lives through a switch to another console
+(`Alt+F1` ...) and back: SDL2 gives the screen away and takes it again, and the keys and
+the mouse are not those of the program while another console is shown. On FreeBSD, SDL2
+cannot give the screen away, so a switch ends the program first; the kernel keeps the
+keyboard on both systems, so `Alt+F1` ... always work. (Only a program that is started on
+Linux from another terminal than the console, by root over ssh, leaves the keyboard of
+the console to SDL2: then `chvt` switches, and the program cannot tell which console is
+shown.)
+
+**FreeBSD.** The program must be started in the foreground from the shell of the text
+console that is shown (`ttyv0`, `ttyv1`, ...): from ssh, tmux, a terminal window or
+another console it refuses before it touches anything. It then takes the console the way
+[dng-png-viewer](https://github.com/lukaszgryglicki/dng-png-viewer) does, and gives the
+keyboard mode, the terminal settings and the text mode back when it ends: after `Esc`,
+after a switch of the console, after the signals INT, TERM, HUP and QUIT, and after a
+crash. Nothing can do that after `kill -KILL`; use `kill -TERM`.
+
+**Without a screen.** In console mode `SDL_VIDEODRIVER` may name another driver of SDL2;
+one name, because a list would make the console a second choice that nobody asked for.
+`offscreen` draws without any screen, which makes pictures and videos in a script or over
+ssh, 1280 x 900 pixels for `--screenshot` and 1024 x 768 for `--mp4`:
+
+```sh
+SDL_VIDEODRIVER=offscreen tet-line --console --screenshot=line.png 'sin(x)+exp(i*x)' -2-i 2+i
+SDL_VIDEODRIVER=offscreen tet-line --console 'x^x' -3+3i 2-3i --anim '-3-3i;2+3i;512;16' --mp4=file.mp4
+```
+
+On the console itself the pictures have the size of the screen, and `--mp4` holds the
+screen until the video is saved.
+
+Tested with SDL 2.32.10. On Linux: on a virtual screen (the `vkms` driver of the kernel)
+from real virtual terminals, with the keys and the mouse of the input devices and with the
+keys of the terminal, with switches to another console and back, `--mp4`, and `Ctrl+C` for
+a program that is busy. On FreeBSD: with SDL2's `x11` driver, where the same keys and
+mouse movements give, byte for byte, the pictures and video frames of the X11 window; with
+its `offscreen` driver; the keys, the signals and the return of the terminal on
+pseudo-terminals; the taking and the giving back of the console on a stand-in for its
+device. **On the physical FreeBSD console it has not been run yet.**
+
 ## Development and license
 
 ```sh
-cargo fmt -- --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
+make test    # cargo test --locked
+make lint    # cargo fmt --all -- --check, cargo clippy --locked --all-targets -- -D warnings
+make fmt     # cargo fmt --all
 ```
 
 AGPL-3.0-only; see [LICENSE](LICENSE). Graphics follow
@@ -294,6 +392,10 @@ that is never shown and, with `fullscreen`, has the size of the primary monitor,
 Xrandr tells), the depth buffer of a multisampled render target attached as the
 renderbuffer that it is (as in upstream `master`), and that buffer 24 bits deep like the
 one of a window instead of 16.
+For the [text console](#text-console) the copy has one more back end beside the X11 one,
+`src/native/linux_sdl2.rs` with `linux_sdl2/console.rs` and `linux_sdl2/terminal.rs`,
+which `start()` runs when `Platform::linux_console` is set or no display is. The tests of
+those two files run through `tests/console.rs`; `tests/build.rs` tests the Makefile.
 
 `Cargo.lock` belongs in version control; `target/`, Rust backups, and all `*.secret`
 files (including nested ones) are ignored.

@@ -230,6 +230,7 @@ mod tests {
             auto_rotation: None,
             auto_scale_frames: false,
             tet_prec: PRECISION,
+            console: false,
         }
     }
 

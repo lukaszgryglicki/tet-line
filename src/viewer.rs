@@ -42,8 +42,9 @@ fn turn(config: &Config, animation: &Animation) -> f32 {
 }
 
 /// The window of the viewer. A `hidden` one is never shown and has the size of the screen: what
-/// is drawn for it goes to a video.
-pub fn window_config(hidden: bool) -> macroquad::conf::Conf {
+/// is drawn for it goes to a video. With `console` the window is the screen of the text
+/// console although a display is set; without a display it always is.
+pub fn window_config(hidden: bool, console: bool) -> macroquad::conf::Conf {
     macroquad::conf::Conf {
         miniquad_conf: macroquad::miniquad::conf::Conf {
             window_title: "tet-line - complex functions".to_owned(),
@@ -54,6 +55,7 @@ pub fn window_config(hidden: bool) -> macroquad::conf::Conf {
             fullscreen: hidden,
             platform: macroquad::miniquad::conf::Platform {
                 linux_x11_hidden: hidden,
+                linux_console: console,
                 // Nothing that is hidden waits for the monitor.
                 swap_interval: hidden.then_some(0),
                 ..Default::default()
@@ -839,6 +841,7 @@ mod tests {
             auto_rotation: None,
             auto_scale_frames: false,
             tet_prec: crate::sampling::PRECISION,
+            console: false,
         };
         let value = |re, im| Some(Complex64::new(re, im));
         let values = [
@@ -1006,6 +1009,7 @@ mod tests {
             auto_rotation: None,
             auto_scale_frames: false,
             tet_prec: crate::sampling::PRECISION,
+            console: false,
         };
         assert_eq!((turn(&config, &animation), rotation(&config)), (0.0, 0.25));
         config.auto_rotation = Some(None);

@@ -27,6 +27,7 @@ fn help_and_argument_errors_do_not_need_a_display_or_tet() {
         "--auto-rotation",
         "--auto-scale-frames",
         "--tet-prec N",
+        "--console",
     ] {
         assert!(String::from_utf8_lossy(&help.stdout).contains(option));
     }

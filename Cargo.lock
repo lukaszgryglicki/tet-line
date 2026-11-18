@@ -350,6 +350,7 @@ dependencies = [
 name = "tet-line"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "macroquad",
  "num-complex",
  "tempfile",

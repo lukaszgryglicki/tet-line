@@ -13,6 +13,10 @@ num-complex = "0.4.6"
 [dev-dependencies]
 tempfile = "3"
 
+# For the tests of the console back end in third_party/miniquad (tests/console.rs).
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
+libc = "0.2"
+
 # The sibling drawer's miniquad patch enables the X11/OpenGL backend on FreeBSD.
 [patch.crates-io]
 miniquad = { path = "third_party/miniquad" }
